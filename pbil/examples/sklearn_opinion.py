@@ -68,7 +68,7 @@ def main():
     genes = [
         2, # True or False for Tf-IDF
         2, # True or False for stopwords
-        3, # 0, 1, 2, ==> 1-gram, 2-gram or 3-gram
+        2, # 0, 1, ==> 1-gram, 2-gram
         len(reductors), # dimensionality reduction
         len(classifiers), # classifier
     ]
@@ -91,6 +91,7 @@ def main():
         score = clas.score(X_test, y_test)
 
         print(vect.__class__.__name__, red.__class__.__name__, clas.__class__.__name__, score)
+        return score
 
     pbil = PBIL(100, 20, 0.1, genes, fitness)
     pbil.run(100)
