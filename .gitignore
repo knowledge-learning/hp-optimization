@@ -124,5 +124,9 @@ venv.bak/
 !.vscode/extensions.json
 .history
 
-
 # End of https://www.gitignore.io/api/linux,python,visualstudiocode
+
+pbil_best.txt
+pbil_generations.txt
+PBIL.json
+run_experiment.py

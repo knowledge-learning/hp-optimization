@@ -7,12 +7,12 @@ Created on Wed Mar  4 04:22:57 2015
 
 import random
 
-from metaheuristic import Metaheuristic
+from .metaheuristic import Metaheuristic
 
 
 class PBIL(Metaheuristic):
 
-    def __init__(self, popsize, indiv_count, learn_rate, values_genes):
+    def __init__(self, popsize, indiv_count, learn_rate, values_genes, fitness, verbose=True):
         """
         popsize = tamaño de la población
         indiv_count = cantidad de individuos a seleccionar para crear la nueva distribución
@@ -25,6 +25,8 @@ class PBIL(Metaheuristic):
         self.distributions = []
         self.step = 0
         self.population = []
+        self.verbose = verbose
+        self._fitness = fitness
 
         #mejor solución encontrada y su evaluación
         self.best = self.__sample_distribution__(self.distributions)
@@ -32,10 +34,6 @@ class PBIL(Metaheuristic):
 
         for i in values_genes:
             self.distributions.append([1.0/i]*i)
-
-    def fitness(self, solt):
-        """Evalúa la solución y devuelve la precisión"""
-        raise NotImplementedError("You have to implement this method.")
 
     def run(self, evals):
         """Corre la metaheurística hasta el número de evaluaciones indicado"""
@@ -66,21 +64,22 @@ class PBIL(Metaheuristic):
             #por debajo de la distribución Dj
             indiv = self.__sample_distribution__(self.distributions)
             print(indiv)
-            fitn = self.fitness(indiv)
+            fitn = self._fitness(indiv)
 
             #se encontró una solución mejor que el óptimo
             if fitn > self.bestfitness:
                 self.best = indiv
                 self.bestfitness = fitn
 
-                with open("best_pbil.txt", "a") as fp:
+                with open("pbil_best.txt", "a") as fp:
                     fp.write("%s\n%s\n" % (self.best, self.bestfitness))
 
             self.population.append((indiv, fitn))
 
             #salvar a este individuo
-            with open("experiments_pbil.txt", "a") as fp:
-                fp.write("%s\n%s\n" % (indiv, fitn))
+            if self.verbose:
+                with open("pbil_generations.txt", "a") as fp:
+                    fp.write("%s\n%s\n" % (indiv, fitn))
 
             #salvar el algoritmo
             self.save()
