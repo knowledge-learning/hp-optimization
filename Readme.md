@@ -2,13 +2,13 @@
 
 To try the examples run
 
-```
+```bash
 python -m pbil.examples.simple_function
 ```
 
 Or
 
-```
+```bash
 python -m pbil.examples.sklearn_opinion
 ```
 
