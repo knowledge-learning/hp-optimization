@@ -3,13 +3,13 @@
 To try the examples run
 
 ```bash
-python -m pbil.examples.simple_function
+python -m hltopt.examples.simple_function
 ```
 
 Or
 
 ```bash
-python -m pbil.examples.sklearn_opinion
+python -m hltopt.examples.sklearn_opinion
 ```
 
 ## Requirements
