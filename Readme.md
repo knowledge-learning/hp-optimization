@@ -30,3 +30,7 @@ python
 >>> import nltk
 >>> nltk.download("movie_reviews")
 ```
+
+## License
+
+Licensed under the [MIT](https://opensource.org/licenses/MIT) open source license.
