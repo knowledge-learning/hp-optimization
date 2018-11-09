@@ -1,4 +1,4 @@
-# PBIL for pipeline optimization
+# Human Language Technologies Optimization Framework
 
 To try the examples run
 
