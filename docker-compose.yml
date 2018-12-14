@@ -1,0 +1,11 @@
+version: "3"
+
+services:
+  hltopt:
+    image: "gplsi/leto:latest"
+    volumes:
+      - ".:/home/hlt"
+      - "~/nltk_data:/root/nltk_data"
+    working_dir: "/home/hlt"
+    command: "python -m hltopt.examples.sklearn_opinion_ge"
+  

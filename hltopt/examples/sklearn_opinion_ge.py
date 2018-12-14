@@ -1,6 +1,5 @@
 # coding: utf-8
 
-import yaml
 import pprint
 import random
 
@@ -34,6 +33,8 @@ class MyGrammar(GrammarGE):
         }
 
     def evaluate(self, i:Individual):
+        print(i)
+
         # preprocesamiento
         if i.nextbool():
             sw = stopwords.words('english')
@@ -54,6 +55,8 @@ class MyGrammar(GrammarGE):
         # evaluar
         X = vect.fit_transform(self.sentences)
         X = reductor.fit_transform(X)
+
+        print(X.shape)
 
         if isinstance(clas, GaussianNB) and hasattr(X, 'toarray'):
             X = X.toarray()
@@ -97,9 +100,11 @@ def load_corpus():
         else:
             cls = 'pos'
 
-        for line in movie_reviews.open(fd):
-            sentences.append(line)
-            classes.append(cls)
+        fp = movie_reviews.open(fd)
+        sentences.append(fp.read())
+        classes.append(cls)
+
+    print("Sentences:", len(sentences))
 
     return sentences, classes
 
@@ -110,12 +115,11 @@ class NoReductor:
 
 
 def main():
+    print("Loading corpus")
     grammar = MyGrammar(*load_corpus())
 
-    print(yaml.dump(grammar.parse()))
-    print(grammar.complexity())
-
-    ge = GE(grammar, popsize=10, selected=5)
+    print("Running heuristic")
+    ge = GE(grammar, popsize=10, selected=0.5)
     ge.run(100)
 
 

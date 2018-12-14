@@ -41,6 +41,9 @@ class Individual:
     def choose(self, *choices):
         return choices[self.nextint(len(choices))]
 
+    def __repr__(self):
+        return "Individual({0})".format(self._values) 
+
 
 class GE(Metaheuristic):
     def __init__(self, grammar, popsize=100, selected=0.1, crossover=0.1):
@@ -74,6 +77,7 @@ class GE(Metaheuristic):
                 list_distances.append(self.grammar.distance(a,b))
 
         self.threshold = sorted(list_distances)[len(list_distances)//2]
+        print("Initial threshold:", self.threshold)
 
         return population
 
@@ -103,9 +107,11 @@ class GE(Metaheuristic):
 
         new_ind = Individual(new_values)
 
-        if self.grammar.distance(ind, new_ind) > self.threshold:
+        if self.threshold < self.grammar.distance(ind, new_ind) < 2 * self.threshold:
+            print('x')
             return new_ind
         else:
+            print('.', end='')
             return self._mutate(ind)
 
     def _evaluate(self, ind:Individual):
@@ -130,9 +136,10 @@ class GE(Metaheuristic):
                 if fn > self.current_fn:
                     self.current_best = ind
                     self.current_fn = fn
-                    print("============", self.current_fn)
+                    print("Updated best: ", self.current_fn)
 
             self.threshold *= 0.95
+            print("Threshold:", self.threshold)
 
         return self.current_best
 
