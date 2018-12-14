@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Wed Mar  4 04:22:57 2015
-
-@author: suilan
-"""
 
 import random
 
@@ -114,7 +109,7 @@ class PBIL(Metaheuristic):
         #print(new_distributions)
 
         # actualizando el valor de la nueva distribucion
-        for i,f in individuals:
+        for i,_ in individuals:
             for g,v in enumerate(i):
                 new_distributions[g][v] += 1.0/len(individuals)
 
