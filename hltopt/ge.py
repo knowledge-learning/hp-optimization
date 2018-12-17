@@ -218,20 +218,28 @@ class GrammarGE:
 
         # si no son iguales, la diferencia es máxima
         # pero hay que consumir los valores correspondientes
-        self._consume(a, asymb, agram)
-        self._consume(b, bsymb, bgram)
+        self._sample(a, asymb, agram)
+        self._sample(b, bsymb, bgram)
 
         return alpha
 
-    def _consume(self, ind:Individual, symbol, grammar):
+    def sample(self, ind:Individual):
+        return self._sample(ind, 'Pipeline', self.parse())
+
+    def _sample(self, ind:Individual, symbol, grammar):
         if isinstance(symbol, dict):
             symbol = list(symbol.keys())[0]
 
-        if symbol[0] in 'if':
-            return ind.nextint(1)
+        if symbol[0:2] == 'i(':
+            a,b = eval(symbol[1:])
+            return ind.nextint(b - a) + a
+
+        if symbol[0:2] == 'f(':
+            a,b = eval(symbol[1:])
+            return ind.nextfloat(a, b)
 
         if symbol[0].islower():
-            return
+            return symbol
 
         productions = grammar[symbol]
         n = len(productions)
@@ -241,15 +249,20 @@ class GrammarGE:
         else:
             prod = productions[ind.nextint(n)]
 
+        values = {}
+        
         for i, s in enumerate(prod):
-            self._consume(ind, s, prod[i])
+            sname = s if isinstance(s, str) else list(s.keys())[0]
+            values[sname] = self._sample(ind, s, prod[i])
+
+        return values
 
     def _importance(self, ind:Individual, imp, symbol, grammar, depth):
         if isinstance(symbol, dict):
             symbol = list(symbol.keys())[0]
 
         if symbol[0].islower():
-            if symbol[0:1] in ['i(', 'f(']:
+            if symbol[0:2] in ['i(', 'f(']:
                 imp.append(depth)
 
             return imp

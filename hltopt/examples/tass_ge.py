@@ -2,13 +2,23 @@
 
 import pprint
 import random
+import string
+import nltk
+import spacy
+
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+
+from nltk.stem.snowball import SnowballStemmer
 
 from ..ge import GrammarGE, GE, Individual
 
 
 class MyGrammar(GrammarGE):
     def __init__(self):
-        pass
+        self.stemmer = SnowballStemmer("spanish")
+        self.spacy_nlp = spacy.load('es')
  
     def grammar(self):
         return {
@@ -24,8 +34,8 @@ class MyGrammar(GrammarGE):
             'Class'    : 'LR | nb | SVM | dt | NN',
 
             # Classic classifiers
-            'LR'       : 'C Penalty',
-            'C'        : 'f(0.01,100)',
+            'LR'       : 'Reg Penalty',
+            'Reg'      : 'f(0.01,100)',
             'Penalty'  : 'l1 | l2',
             'SVM'      : 'Kernel',
             'Kernel'   : 'linear | rbf | poly',
@@ -57,35 +67,225 @@ class MyGrammar(GrammarGE):
             # Final layer
             'FLayer'   : 'crf | lr',
             
-            'Repr'     : 'Prep Token PosPrep SemFeat MulWords Embed',
+            'Repr'     : 'Prep Token SemFeat PosPrep MulWords Embed',
             'Prep'     : 'DelPunt StripAcc',
             'DelPunt'  : 'yes | no',
             'StripAcc' : 'yes | no',
-            'Token'    : 'PosTag Dep Stem',
+            'Token'    : 'wordTok',
             'PosTag'   : 'yes | no',
             'Dep'      : 'yes | no',
             'PosPrep'  : 'StopW Stem',
             'Stem'     : 'yes | no',
             'StopW'    : 'yes | no',
-            'SemFeat'  : 'UMLS | SNOMED',
+            'SemFeat'  : 'PosTag Dep UMLS SNOMED',
             'UMLS'     : 'yes | no',
             'SNOMED'   : 'yes | no',
             'MulWords' : 'countPhrase | freeling | Ngram',
             'Ngram'    : 'i(2,4)',
-            'Embed'    : 'WordVec | SenseVec | CharEmbed',
+            'Embed'    : 'WordVec SenseVec CharEmbed',
             'WordVec'  : 'yes | no',
             'SenseVec' : 'yes | no',
             'CharEmbed': 'yes | no',
         }
 
     def evaluate(self, i:Individual):
-        print(i)
+        
+        def Pipeline(self, i):
+            pass
+            
+        def ABC(self, i):
+            return self.Class(i)
+            
+        def BC(self, i):
+            return self.Class(i)
+            
+        def AB(self, i):
+            if i.nextbool():
+                return self.Class(i)  
+            else:
+                return self.Seq(i)
+
+        def A(self, i):
+            if i.nextbool():
+                return self.Class(i)  
+            else:
+                return self.Seq(i)
+            
+        def B(self, i):
+            return self.Class(i)
+            
+        def C(self, i):
+            return self.Class(i)
+            
+        def Seq(self, i):
+            if i.nextbool():
+                #crf
+                return None
+            else:
+                #hmm
+                return None
+                
+        def Class(self, i):
+            #LR | nb | SVM | dt | NN
+            des = i.nextint(5)
+            if des == 0:
+                return self.LR(i)
+            elif des == 1:
+                return MultinomialNB()
+            elif des == 2:
+                return self.SVM(i)
+            elif des == 3:
+                return DecisionTreeClasifier()
+            else:
+                return self.NN(i)
+        
+        def LR(self, i):
+            return LogisticRegression(C=self.Reg(i), penalty=self.Penalty(i))
+            
+        def Reg(self, i):
+            return i.nextfloat(0.01, 100)
+            
+        def Penalty(self, i):
+            return i.choose('l1', 'l2')
+            
+        def SVM(self, i):
+            return SVC(kernel=self.Kernel(i))
+            
+        def Kernel(self, i):
+            #linear | rbf | poly
+            return i.choose('lineal', 'rbf', 'poly')
+            
+        def NN(self, i):
+            pass
+            
+        def Drop(self, i):
+            pass
+            
+        def CVLayers(self, i):
+            pass
+            
+        def Count(self, i):
+            pass
+            
+        def MinFilter(self, i):
+            pass
+            
+        def MaxFilter(self, i):
+            pass
+            
+        def FormatCon(self, i):
+            pass
+            
+        def RLayers(self, i):
+            pass
+            
+        def Size(self, i):
+            pass
+            
+        def DLayers(self, i):
+            pass
+            
+        def Act(self, i):
+            pass
+            
+        def MinSize(self, i):
+            pass
+            
+        def MaxSize(self, i):
+            pass
+            
+        def FormatDen(self, i):
+            pass
+            
+        def FLayer(self, i):
+            pass
+            
+        def Repr(self, i):
+            pass
+            
+        def Prep(self, i, texto):
+            #'DelPunt StripAcc'
+            met = self.DelPunt(i, texto)
+            return self.StripAcc(i, met)
+            
+        def DelPunt(self, i, texto):
+            #yes | no
+            if i.nextbool():
+                return s.translate(None, string.punctuation)
+            else:
+                return texto
+
+        def StripAcc(self, i, texto):
+            #yes | no
+            if i.nextbool():
+                pass #llamar al método de nltk (quitar acento)
+            else:
+                return texto
+            
+        def Token(self, i, texto):
+            tokens = self.spacy_nlp(texto)
+            return [t.text for text in tokens]
+
+        def PosTag(self, i, texto):
+            tokens = self.spacy_nlp(texto)
+            return [t.pos_ + t.tag_ for t in tokens]
+            
+        def Dep(self, i, texto):
+            tokens = self.spacy_nlp(texto)
+            return [t.dep_ for t in tokens]
+            
+        def PosPrep(self, i):
+            pass
+            
+        def Stem(self, i, tokens):
+            new = []
+            for t in tokens:
+                new.append(self.stemmer.stem(t))
+            return new
+            
+        def StopW(self, i):
+            tokens = self.spacy_nlp(texto)
+            return [t for t in tokens if not t.is_stop]
+            
+        def SemFeat(self, i, tokens):
+            #'PosTag Dep UMLS SNOMED'
+            new = {}
+            new['postag'] = self.PosTag(i, texto)
+            new['dep'] = self.Dep(i,texto)
+            new['umls'] = self.UMLS()
+            new['snomed'] = self.SNOMED()
+            return new
+
+        def UMLS(self, i):
+            pass
+            
+        def SNOMED(self, i):
+            pass
+            
+        def MulWords(self, i):
+            pass
+            
+        def Ngram(self, i):
+            pass
+            
+        def Embed(self, i):
+            pass
+            
+        def WordVec(self, i):
+            pass
+            
+        def SenseVec(self, i):
+            pass
+            
+        def CharEmbed(self, i):
+            pass
+            
 
 
 def main():
     grammar = MyGrammar()
-
-    print(grammar.complexity())
+    i = Individual([random.uniform(0,1) for i in range(100)])
+    print(grammar.sample(i))
 
 
 if __name__ == '__main__':
