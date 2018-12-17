@@ -179,7 +179,7 @@ class GrammarGE:
         assert asymb == bsymb
 
         # si ambos son hojas de valores continuos
-        if asymb[0] in 'if':
+        if asymb[0:1] in ['i(', 'f(']:
             return abs(a.value() - b.value()) * alpha
 
         # si ambos son hojas de valores discretos
@@ -249,7 +249,7 @@ class GrammarGE:
             symbol = list(symbol.keys())[0]
 
         if symbol[0].islower():
-            if symbol[0] in ['i', 'f']:
+            if symbol[0:1] in ['i(', 'f(']:
                 imp.append(depth)
 
             return imp
@@ -297,11 +297,11 @@ class GrammarGE:
             for symb in prod.split():
                 if symb[0].isupper():
                     symbols.append(self._parse_symbol(grammar, symb))
-                elif symb[0] == 'i':
+                elif symb[0:1] == 'i(':
                     symbols.append({
                         'integer': list(eval(symb[1:]))
                     })
-                elif symb[0] == 'f':
+                elif symb[0:1] == 'f(':
                     symbols.append({
                         'float': list(eval(symb[1:]))
                     })
