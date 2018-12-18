@@ -7,6 +7,7 @@ services:
       - "8888:8888"
     volumes:
       - ".:/home/hlt"
+      - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
     working_dir: "/home/hlt"
     command: "jupyter notebook --allow-root --NotebookApp.ip=0.0.0.0 --NotebookApp.token= --no-browser"
@@ -15,6 +16,7 @@ services:
     image: "matcomuh/ml:latest"
     volumes:
       - ".:/home/hlt"
+      - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
     working_dir: "/home/hlt"
     command: "pytest"
@@ -23,6 +25,7 @@ services:
     image: "matcomuh/ml:latest"
     volumes:
       - ".:/home/hlt"
+      - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
     working_dir: "/home/hlt"
     command: "python -m hltopt.examples.tass_ge"

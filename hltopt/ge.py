@@ -238,6 +238,9 @@ class GrammarGE:
             a,b = eval(symbol[1:])
             return ind.nextfloat(a, b)
 
+        if symbol in ['yes', 'no']:
+            return symbol == 'yes'
+
         if symbol[0].islower():
             return symbol
 
@@ -254,6 +257,11 @@ class GrammarGE:
         for i, s in enumerate(prod):
             sname = s if isinstance(s, str) else list(s.keys())[0]
             values[sname] = self._sample(ind, s, prod[i])
+
+        if len(values) == 1:
+            key = list(values.keys())[0]
+            if key[0].islower():
+                return values[key]
 
         return values
 
