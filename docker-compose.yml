@@ -1,11 +1,28 @@
 version: "3"
 
 services:
-  hltopt:
-    image: "gplsi/leto:latest"
+  notebook:
+    image: "matcomuh/ml:latest"
+    ports:
+      - "8888:8888"
     volumes:
       - ".:/home/hlt"
       - "~/nltk_data:/root/nltk_data"
     working_dir: "/home/hlt"
-    command: "bash"
-  
+    command: "jupyter notebook --allow-root --NotebookApp.ip=0.0.0.0 --NotebookApp.token= --no-browser"
+
+  test:
+    image: "matcomuh/ml:latest"
+    volumes:
+      - ".:/home/hlt"
+      - "~/nltk_data:/root/nltk_data"
+    working_dir: "/home/hlt"
+    command: "pytest"
+
+  example:
+    image: "matcomuh/ml:latest"
+    volumes:
+      - ".:/home/hlt"
+      - "~/nltk_data:/root/nltk_data"
+    working_dir: "/home/hlt"
+    command: "python -m hltopt.examples.tass_ge"
