@@ -21,25 +21,27 @@ class MyGrammar(GrammarGE):
     def grammar(self):
         return {
             'Pipeline': 'Prep Vect Red Class',
-            'Prep': 'none | stopW',
-            'Vect': 'Tf | CV',
-            'Tf': 'i(1,1)',
-            'CV': 'i(1,1)',
-            'Red': 'none | svd',
-            'Class': 'nb | LR | SVM',
-            'LR': 'l1 C | l2 C',
-            'C': 'f(0.001,10)',
-            'SVM': 'linear | rbf'
+            'Prep'    : 'none | stopW',
+            'Vect'    : 'TF | CV',
+            'TF'      : 'i(1,2)',
+            'CV'      : 'i(1,2)',
+            'Red'     : 'none | svd',
+            'Class'   : 'nb | LR | SVM',
+            'LR'      : 'l1 Reg | l2 Reg',
+            'Reg'     : 'f(0.01,10)',
+            'SVM'     : 'linear | rbf'
         }
 
     def evaluate(self, i:Individual):
         print(i)
+        print(self.sample(i))
+        i.reset()
 
         # preprocesamiento
         if i.nextbool():
-            sw = stopwords.words('english')
-        else:
             sw = None
+        else:
+            sw = stopwords.words('english')
 
         # vectorizador
         vect_cls = i.choose(TfidfVectorizer, CountVectorizer)
@@ -120,7 +122,10 @@ def main():
 
     print("Running heuristic")
     ge = GE(grammar, popsize=10, selected=0.5)
-    ge.run(100)
+    ge.run(5)
+
+    print("avg fitness", ge.avg_fitness)
+    print("best fitness", ge.best_fitness)
 
 
 if __name__ == '__main__':

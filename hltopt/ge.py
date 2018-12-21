@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 
 import random
+import numpy as np
 
 from .metaheuristic import Metaheuristic
+from random import gauss
 
+def make_rand_vector(dims):
+    vec = [gauss(0, 1) for i in range(dims)]
+    mag = sum(x**2 for x in vec) ** .5
+    return [x/mag for x in vec]
 
 class Individual:
     def __init__(self, values):
-        self._values = values
+        self._values = [min(1,max(0,v)) for v in values]
         self._current = 0
 
     def reset(self):
@@ -18,6 +24,9 @@ class Individual:
 
     def __iter__(self):
         return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
 
     def _advance(self):
         self._current += 1
@@ -42,7 +51,7 @@ class Individual:
         return choices[self.nextint(len(choices))]
 
     def __repr__(self):
-        return "Individual({0})".format(self._values) 
+        return "Individual({0})".format(self._values)
 
 
 class GE(Metaheuristic):
@@ -99,20 +108,25 @@ class GE(Metaheuristic):
 
     def _mutate(self, ind:Individual) -> Individual:
         """Construye un nuevo individuo mutado a partir de `ind`."""
-        new_values = list(ind)
 
-        for i,_ in enumerate(new_values):
-            if random.uniform(0,1) < self.crossover:
-                new_values[i] = random.uniform(0,1)
+        lmin = 0
+        lmax = 1
 
-        new_ind = Individual(new_values)
-
-        if self.threshold < self.grammar.distance(ind, new_ind) < 2 * self.threshold:
-            print('x')
-            return new_ind
-        else:
+        while True:
             print('.', end='')
-            return self._mutate(ind)
+
+            mutation = make_rand_vector(len(ind))
+            lmid = (lmin + lmax)/2
+            new_ind = Individual([v + lmid*x for x in mutation])
+            dist = self.grammar.distance(ind, new_ind)
+
+            if dist < self.threshold:
+                lmin = lmid
+            elif dist > 2 * self.threshold:
+                lmax = lmid
+            else:
+                print('x')
+                return new_ind
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
@@ -126,6 +140,8 @@ class GE(Metaheuristic):
         self.fitness = [self._evaluate(i) for i in self.population]
 
         self.current_best, self.current_fn = None, 0
+        self.avg_fitness = []
+        self.best_fitness = []
 
         while self.it < evals:
             best_individuals = self._select(self.population, self.fitness)
@@ -137,6 +153,9 @@ class GE(Metaheuristic):
                     self.current_best = ind
                     self.current_fn = fn
                     print("Updated best: ", self.current_fn)
+
+            self.avg_fitness.append(np.mean(self.fitness))
+            self.best_fitness.append(self.current_best)
 
             self.threshold *= 0.95
             print("Threshold:", self.threshold)
@@ -253,7 +272,7 @@ class GrammarGE:
             prod = productions[ind.nextint(n)]
 
         values = {}
-        
+
         for i, s in enumerate(prod):
             sname = s if isinstance(s, str) else list(s.keys())[0]
             values[sname] = self._sample(ind, s, prod[i])

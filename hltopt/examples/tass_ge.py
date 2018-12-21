@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import os
 import pprint
 import random
 import string
@@ -9,6 +10,8 @@ import unicodedata
 import gensim
 import yaml
 import numpy as np
+
+from pathlib import Path
 
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import SVC
@@ -28,12 +31,29 @@ from keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embed
 from ..ge import GrammarGE, GE, Individual
 
 
+class Token:
+    def __init__(self, text, label, pos_init, normalized=None):
+        self.text = text
+        self.label = label
+        self.pos_init = pos_init
+        self.pos_end = pos_init + len(text)
+        self.normalized = normalized or text
+
+    def __and__(self, other):
+        return max(0, min(self.pos_end, other.pos_end) - max(self.pos_init, other.pos_init)) > 0
+
+    def __repr__(self):
+        return self.text
+
+    def __json__(self):
+        return self.__dict__
+
+
 class MyGrammar(GrammarGE):
     def __init__(self):
         self.stemmer = SnowballStemmer("spanish")
         self.spacy_nlp = spacy.load('es')
-        # self.word2vec = api.load("word2vec-google-news-300")
- 
+
     def grammar(self):
         return {
             'Pipeline' : 'Repr AB C | Repr A B C | Repr ABC | Repr A BC',
@@ -62,7 +82,7 @@ class MyGrammar(GrammarGE):
             'Count'    : 'i(1,5)',
             # Con el objetivo de eliminar la recursividad de la grmática y controlar el tamaño de las capas
             # se define un espacio genérico donde no se define cada capa de la red, sino que se define una
-            # arquitectura de alto nivel que restringe las posibles redes. No aparecen representadas todas 
+            # arquitectura de alto nivel que restringe las posibles redes. No aparecen representadas todas
             # las posiblidades pero este subconjunto de ellas es semáticamente más interesante.
             'MinFilter': 'i(1,5)',
             'MaxFilter': 'i(1,5)',
@@ -76,22 +96,22 @@ class MyGrammar(GrammarGE):
             'Act'      : 'sigmoid | relu | tanh',
             'MinSize'  : 'i(10,100)',
             'MaxSize'  : 'i(10,100)',
-            #las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño 
+            #las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño
             'FormatDen': 'grow | shrink | same',
             # Final layer
             'FLayer'   : 'crf | lr',
-            
-            'Repr'     : 'Prep Token SemFeat PosPrep MulWords Embed',
+
+            'Repr'     : 'Token Prep SemFeat PosPrep MulWords Embed',
+            'Token'    : 'wordTok',
             'Prep'     : 'DelPunt StripAcc',
             'DelPunt'  : 'yes | no',
             'StripAcc' : 'yes | no',
-            'Token'    : 'wordTok',
-            'PosTag'   : 'yes | no',
-            'Dep'      : 'yes | no',
             'PosPrep'  : 'StopW Stem',
             'Stem'     : 'yes | no',
             'StopW'    : 'yes | no',
             'SemFeat'  : 'PosTag Dep UMLS SNOMED',
+            'PosTag'   : 'yes | no',
+            'Dep'      : 'yes | no',
             'UMLS'     : 'yes | no',
             'SNOMED'   : 'yes | no',
             'MulWords' : 'countPhrase | freeling | Ngram',
@@ -104,35 +124,59 @@ class MyGrammar(GrammarGE):
         }
 
     def evaluate(self, i:Individual):
-        pass
-        
-    def __Pipeline__(self, i):
-        pass
-        
+        # load training data
+        dataset_path = Path.cwd() / 'hltopt' / 'examples' / 'datasets' / 'tass18_task3'
+
+        texts = []
+
+        for file in (dataset_path / 'training' / 'input').iterdir():
+            if file.name.endswith('.txt'):
+                goldA = dataset_path / 'training' / 'gold' / ('output_A_' + file.name[6:])
+                goldB = dataset_path / 'training' / 'gold' / ('output_B_' + file.name[6:])
+                goldC = dataset_path / 'training' / 'gold' / ('output_C_' + file.name[6:])
+
+                text = file.open().read()
+                texts.append(text)
+
+        return self.__Pipeline__(i, texts)
+
+    def __Pipeline__(self, i, texts):
+        # 'Pipeline' : 'Repr AB C | Repr A B C | Repr ABC | Repr A BC',
+        choice = 1 #i.nextint(4)
+
+        if choice == 0:
+            pass
+        elif choice == 1:
+            rep = self.__Repr__(i, texts)
+        elif choice == 2:
+            pass
+        else:
+            pass
+
     def __ABC__(self, i):
         return self.__Class__(i)
-        
+
     def __BC__(self, i):
         return self.__Class__(i)
-        
+
     def __AB__(self, i):
         if i.nextbool():
-            return self.__Class__(i)  
+            return self.__Class__(i)
         else:
             return self.__Seq__(i)
 
     def __A__(self, i):
         if i.nextbool():
-            return self.__Class__(i)  
+            return self.__Class__(i)
         else:
             return self.__Seq__(i)
-        
+
     def __B__(self, i):
         return self.__Class__(i)
-        
+
     def __C__(self, i):
         return self.__Class__(i)
-        
+
     def __Seq__(self, i):
         if i.nextbool():
             #crf
@@ -140,7 +184,7 @@ class MyGrammar(GrammarGE):
         else:
             #hmm
             return None
-            
+
     def __Class__(self, i):
         #LR | nb | SVM | dt | NN
         des = i.nextint(5)
@@ -154,23 +198,23 @@ class MyGrammar(GrammarGE):
             return DecisionTreeClasifier()
         else:
             return self.__NN__(i)
-    
+
     def __LR__(self, i):
         return LogisticRegression(C=self.__Reg__(i), penalty=self.__Penalty__(i))
-        
+
     def __Reg__(self, i):
         return i.nextfloat(0.01, 100)
-        
+
     def __Penalty__(self, i):
         return i.choose('l1', 'l2')
-        
+
     def __SVM__(self, i):
         return SVC(kernel=self.__Kernel__(i))
-        
+
     def __Kernel__(self, i):
         #linear | rbf | poly
         return i.choose('lineal', 'rbf', 'poly')
-        
+
     def __NN__(self, i, input_size):
         # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
         model = Sequential()
@@ -194,10 +238,10 @@ class MyGrammar(GrammarGE):
         model = Model(inputs=x, outputs=y)
         # model.compile()
         return model
-        
+
     def __Drop__(self, i):
         return i.nextfloat(0.1, 0.5)
-        
+
     def __CVLayers__(self, i, model, dropout):
         # 'CVLayers' : 'Count MinFilter MaxFilter FormatCon',
         count = self.__Count__(i)
@@ -226,35 +270,35 @@ class MyGrammar(GrammarGE):
                 model = layers[0]
 
         return model
-        
+
     def __Count__(self, i):
         return i.nextint(5) + 1
-        
+
     def __MinFilter__(self, i):
         return i.nextint(5)
-        
+
     def __MaxFilter__(self, i):
         return i.nextint(5)
-        
+
     def __FormatCon__(self, i):
         return i.choose('same', 'all', 'rand')
-        
+
     def __RLayers__(self, i, model, dropout):
         # 'RLayers'  : 'Size',
         size = self.__Size__(i)
         lstm = LSTM(size, dropout=dropout, recurrent_dropout=dropout)(model)
         return lstm
-        
+
     def __Size__(self, i):
         return i.nextint(90) + 10
-        
+
     def __DLayers__(self, i, model, dropout):
         # Dense layers
         # 'DLayers'  : 'Count MaxSize MinSize FormatDen Act',
         # 'Act'      : 'sigmoid | relu | tanh',
         # 'MinSize'  : 'i(10,100)',
         # 'MaxSize'  : 'i(10,100)',
-        # #las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño 
+        # #las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño
         # 'FormatDen': 'grow | shrink | same',
 
         count = self.__Count__(i)
@@ -275,30 +319,32 @@ class MyGrammar(GrammarGE):
             model = Dropout(dropout)(layer)
 
         return model
-        
+
     def __MinSize__(self, i):
         return i.nextint(90)+10
-        
+
     def __MaxSize__(self, i):
         return i.nextint(90)+10
-        
+
     def __FLayer__(self, i, model, dropout):
         return model
-        
-    def __Repr__(self, i):
-        pass
-        
-    def __Prep__(self, i, texto):
+
+    def __Repr__(self, i, texts):
+        # 'Prep Token SemFeat PosPrep MulWords Embed',
+        texts = self.__Prep__(i, texts)
+
+
+    def __Prep__(self, i, texts):
         #'DelPunt StripAcc'
-        met = self.__DelPunt__(i, texto)
+        met = self.__DelPunt__(i, texts)
         return self.__StripAcc__(i, met)
-        
-    def __DelPunt__(self, i, texto):
+
+    def __DelPunt__(self, i, texts):
         #yes | no
         if i.nextbool():
-            return s.translate(None, string.punctuation)
+            return texto.translate(None, string.punctuation)
         else:
-            return texto
+            return texts
 
     def __StripAcc__(self, i, texto):
         #yes | no
@@ -306,7 +352,7 @@ class MyGrammar(GrammarGE):
             return gensim.utils.deaccent(texto)
         else:
             return texto
-        
+
     def __Token__(self, i, texto):
         tokens = self.spacy_nlp(texto)
         return [t.text for t in tokens]
@@ -314,11 +360,11 @@ class MyGrammar(GrammarGE):
     def __PosTag__(self, i, texto):
         tokens = self.spacy_nlp(texto)
         return [t.pos_ + t.tag_ for t in tokens]
-        
+
     def __Dep__(self, i, texto):
         tokens = self.spacy_nlp(texto)
         return [t.dep_ for t in tokens]
-        
+
     def __PosPrep__(self, i, tokens):
         tokens = self.__Stem__(i, tokens)
         return self.__StopW__(i, tokens)
@@ -331,7 +377,7 @@ class MyGrammar(GrammarGE):
             return new
         else:
             return tokens
-            
+
     def __StopW__(self, i, tokens):
         if i.nextbool():
             sw = set(stopwords.words('spanish'))
@@ -339,10 +385,10 @@ class MyGrammar(GrammarGE):
             sw = set()
 
         return [t for t in tokens if not t.lower() in sw]
-        
+
     def __SemFeat__(self, i, tokens, texto):
         """Recibe el texto divido en tokens y el texto plano y devuelve un diccionario que
-        tiene como llave el tipo de feature extraido y el resultado de este proceso como 
+        tiene como llave el tipo de feature extraido y el resultado de este proceso como
         valor."""
         #'PosTag
         new = {}
@@ -354,13 +400,13 @@ class MyGrammar(GrammarGE):
 
     def __UMLS__(self, i):
         return False
-        
+
     def __SNOMED__(self, i):
         return False
-        
+
     def __MulWords__(self, i):
         pass
-        
+
     def __Ngram__(self, i, tokens):
         #i(2,4)
         n = i.nextint(3) + 2
@@ -368,17 +414,19 @@ class MyGrammar(GrammarGE):
         for i in range(1, n+1):
             result += list(nltk.ngrams(tokens, i))
         return result
-        
-    def __Embed__(self, i, documents):
-        return self.__WordVec__(i, documents)
-        
+
+    def __Embed__(self, i, text, tokenized):
+        if i.nextbool():
+            return self.__WordVec__(i, text)
+        else:
+            return self.__Vectorizer__(i, tokenized)
+
     def __WordVec__(self, i, documents):
-        # self.word2vec[w]
-        pass
-        
+        return [[t.vector for t in nlp(sentence)] for sentence in documents]
+
     def __SenseVec__(self, i):
         pass
-        
+
     def __CharEmbed__(self, i):
         pass
 
@@ -401,20 +449,7 @@ def main():
     print(yaml.dump(grammar.sample(i)))
     i.reset()
 
-    # text = "Éste es; un tëxto. Para el TASS-2018!!"
-    # r = grammar.__Prep__(i, text)
-    # r = grammar.__Token__(i, r)
-    # sem = grammar.__SemFeat__(i, r, text)
-    # r = grammar.__PosPrep__(i, r)
-
-    # print(r)
-    # print(sem)
-
-    # vect = grammar.__Vectorizer__(i, [r])
-    # print(vect)
-
-    model = grammar.__NN__(i, 32)
-    model.summary()
+    grammar.evaluate(i)
 
 
 if __name__ == '__main__':
