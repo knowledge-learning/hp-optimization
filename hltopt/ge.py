@@ -6,10 +6,16 @@ import numpy as np
 from .metaheuristic import Metaheuristic
 from random import gauss
 
+
+class InvalidPipeline(ValueError):
+    """Raise when a pipeline is not valid after construction."""
+
+
 def make_rand_vector(dims):
     vec = [gauss(0, 1) for i in range(dims)]
     mag = sum(x**2 for x in vec) ** .5
     return [x/mag for x in vec]
+
 
 class Individual:
     def __init__(self, values):
@@ -117,7 +123,7 @@ class GE(Metaheuristic):
 
             mutation = make_rand_vector(len(ind))
             lmid = (lmin + lmax)/2
-            new_ind = Individual([v + lmid*x for x in mutation])
+            new_ind = Individual([v + lmid*x for v,x in zip(ind,mutation)])
             dist = self.grammar.distance(ind, new_ind)
 
             if dist < self.threshold:
@@ -130,7 +136,10 @@ class GE(Metaheuristic):
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
-        return self.grammar.evaluate(ind)
+        try:
+            return self.grammar.evaluate(ind)
+        except InvalidPipeline:
+            return 0
 
     def run(self, evals:int):
         """Ejecuta la metaheurística hasta el número de evaluaciones indicado"""

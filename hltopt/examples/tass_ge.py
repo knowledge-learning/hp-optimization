@@ -16,8 +16,8 @@ from pathlib import Path
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.tree import DecisionTreeClassifier
 
 from gensim.models import Word2Vec
 import gensim.downloader as api
@@ -32,21 +32,21 @@ from ..ge import GrammarGE, GE, Individual
 
 
 class Token:
-    def __init__(self, text, label, pos_init, normalized=None):
+    def __init__(self, text:str, init:int, norm:str, pos:str, tag:str, dep:str, vector):
         self.text = text
-        self.label = label
-        self.pos_init = pos_init
-        self.pos_end = pos_init + len(text)
-        self.normalized = normalized or text
+        self.init = init
+        self.end = init + len(text)
+        self.norm = norm or text
+        self.pos = pos
+        self.tag = tag
+        self.dep = dep
+        self.vector = vector
 
     def __and__(self, other):
-        return max(0, min(self.pos_end, other.pos_end) - max(self.pos_init, other.pos_init)) > 0
+        return max(0, min(self.end, other.pos_end) - max(self.init, other.pos_init)) > 0
 
     def __repr__(self):
-        return self.text
-
-    def __json__(self):
-        return self.__dict__
+        return repr(self.__dict__)
 
 
 class MyGrammar(GrammarGE):
@@ -56,7 +56,7 @@ class MyGrammar(GrammarGE):
 
     def grammar(self):
         return {
-            'Pipeline' : 'Repr AB C | Repr A B C | Repr ABC | Repr A BC',
+            'Pipeline' : 'Repr A B C | Repr AB C | Repr A BC | Repr ABC',
             'ABC'      : 'Class',
             'BC'       : 'Class',
             'AB'       : 'Seq | Class',
@@ -116,11 +116,10 @@ class MyGrammar(GrammarGE):
             'SNOMED'   : 'yes | no',
             'MulWords' : 'countPhrase | freeling | Ngram',
             'Ngram'    : 'i(2,4)',
-            'Embed'    : 'WordVec SenseVec CharEmbed | Vectorizer',
-            'WordVec'  : 'yes | no',
-            'SenseVec' : 'yes | no',
-            'CharEmbed': 'yes | no',
-            'Vectorizer': 'countVect | tfxIdfVect',
+            'Embed'    : 'wordVec | onehot | none',
+            # 'WordVec'  : 'yes | no',
+            # 'SenseVec' : 'yes | no',
+            # 'CharEmbed': 'yes | no',
         }
 
     def evaluate(self, i:Individual):
@@ -136,22 +135,49 @@ class MyGrammar(GrammarGE):
                 goldC = dataset_path / 'training' / 'gold' / ('output_C_' + file.name[6:])
 
                 text = file.open().read()
-                texts.append(text)
+                texts.extend([s for s in text.split('\n') if s])
+                break # TODO: remove
 
-        return self.__Pipeline__(i, texts)
+        validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
+        validation_A = dataset_path / 'develop' / 'gold' / 'output_A_develop.txt'
+        validation_B = dataset_path / 'develop' / 'gold' / 'output_B_develop.txt'
+        validation_C = dataset_path / 'develop' / 'gold' / 'output_C_develop.txt'
 
-    def __Pipeline__(self, i, texts):
-        # 'Pipeline' : 'Repr AB C | Repr A B C | Repr ABC | Repr A BC',
-        choice = 1 #i.nextint(4)
+        validation_sents = [s for s in validation.open().read().split('\n') if s]
+        validation_size = len(validation_sents)
+
+        texts.extend(validation_sents)
+
+        return self.__Pipeline__(i, texts, validation_size)
+
+    def __Pipeline__(self, i, texts, validation_size):
+        # 'Pipeline' : 'Repr A B C | Repr AB C |  Repr A BC | Repr ABC',
+        choice = i.nextint(4)
+        choice = 0
+
+        # repr es una lista de matrices (una matriz por cada oración):
+        # [
+        #   array([            <- oración 0
+        #       0.1, 0.4, .... <- token 0
+        #       0.1, 0.4, .... <- token 1
+        #       ...
+        #       0.1, 0.4, .... <- token n
+        #   ]),
+        #   ...                <-- oración 1
+        # ]
+        rep = self.__Repr__(i, texts)
+        train = rep[:-validation_size]
+        dev = rep[validation_size:]
+
+        # asegurarse que dividimos bien
+        assert len(rep) == len(train) + len(dev)
 
         if choice == 0:
-            pass
-        elif choice == 1:
-            rep = self.__Repr__(i, texts)
-        elif choice == 2:
+            # Ejecutar tareas A, B y C en secuencia
+            # Tarea A
             pass
         else:
-            pass
+            return None
 
     def __ABC__(self, i):
         return self.__Class__(i)
@@ -195,7 +221,7 @@ class MyGrammar(GrammarGE):
         elif des == 2:
             return self.__SVM__(i)
         elif des == 3:
-            return DecisionTreeClasifier()
+            return DecisionTreeClassifier()
         else:
             return self.__NN__(i)
 
@@ -331,8 +357,14 @@ class MyGrammar(GrammarGE):
 
     def __Repr__(self, i, texts):
         # 'Prep Token SemFeat PosPrep MulWords Embed',
+        print(texts[0])
         texts = self.__Prep__(i, texts)
-
+        tokens = self.__Token__(i, texts)
+        tokens = self.__SemFeat__(i, tokens)
+        tokens = self.__PosPrep__(i, tokens)
+        tokens = self.__MulWords__(i, tokens)
+        vectors = self.__Embed__(i, tokens)
+        return vectors
 
     def __Prep__(self, i, texts):
         #'DelPunt StripAcc'
@@ -342,28 +374,29 @@ class MyGrammar(GrammarGE):
     def __DelPunt__(self, i, texts):
         #yes | no
         if i.nextbool():
-            return texto.translate(None, string.punctuation)
+            return [t.translate({c:None for c in string.punctuation}) for t in texts]
         else:
             return texts
 
-    def __StripAcc__(self, i, texto):
+    def __StripAcc__(self, i, texts):
         #yes | no
         if i.nextbool():
-            return gensim.utils.deaccent(texto)
+            return [gensim.utils.deaccent(t) for t in texts]
         else:
-            return texto
+            return texts
 
-    def __Token__(self, i, texto):
-        tokens = self.spacy_nlp(texto)
-        return [t.text for t in tokens]
+    def __Token__(self, i, texts):
+        return [[Token(w.text, w.idx, w.norm_, w.pos_, w.tag_, w.dep_, w.vector) for w in self.spacy_nlp(t)] for t in texts]
 
-    def __PosTag__(self, i, texto):
-        tokens = self.spacy_nlp(texto)
-        return [t.pos_ + t.tag_ for t in tokens]
+    # def __PosTag__(self, i, tokens, texts):
+    #     for tok, sen in zip(tokens, texts):
 
-    def __Dep__(self, i, texto):
-        tokens = self.spacy_nlp(texto)
-        return [t.dep_ for t in tokens]
+    #     tokens = self.spacy_nlp(texto)
+    #     return [t.pos_ + t.tag_ for t in tokens]
+
+    # def __Dep__(self, i, texto):
+    #     tokens = self.spacy_nlp(texto)
+    #     return [t.dep_ for t in tokens]
 
     def __PosPrep__(self, i, tokens):
         tokens = self.__Stem__(i, tokens)
@@ -371,12 +404,11 @@ class MyGrammar(GrammarGE):
 
     def __Stem__(self, i, tokens):
         if i.nextbool():
-            new = []
-            for t in tokens:
-                new.append(self.stemmer.stem(t))
-            return new
-        else:
-            return tokens
+            for tok in tokens:
+                for t in tok:
+                    t.norm = self.stemmer.stem(t.norm)
+
+        return tokens
 
     def __StopW__(self, i, tokens):
         if i.nextbool():
@@ -384,28 +416,43 @@ class MyGrammar(GrammarGE):
         else:
             sw = set()
 
-        return [t for t in tokens if not t.lower() in sw]
+        return [[t for t in tok if not t.norm in sw] for tok in tokens]
 
-    def __SemFeat__(self, i, tokens, texto):
-        """Recibe el texto divido en tokens y el texto plano y devuelve un diccionario que
-        tiene como llave el tipo de feature extraido y el resultado de este proceso como
-        valor."""
-        #'PosTag
-        new = {}
-        new['postag'] = self.__PosTag__(i, texto)
-        new['dep'] = self.__Dep__(i, texto)
-        new['umls'] = self.__UMLS__(i)
-        new['snomed'] = self.__SNOMED__(i)
-        return new
+    def __SemFeat__(self, i, tokens):
+        # incluir pos-tag?
+        if not i.nextbool():
+            for tok in tokens:
+                for t in tok:
+                    del t.pos
+                    del t.tag
 
-    def __UMLS__(self, i):
-        return False
+        # incluir dependencias
+        if not i.nextbool():
+            for tok in tokens:
+                for t in tok:
+                    del t.dep
 
-    def __SNOMED__(self, i):
-        return False
+        self.__UMLS__(i, tokens)
+        self.__SNOMED__(i, tokens)
 
-    def __MulWords__(self, i):
-        pass
+        return tokens
+
+    def __UMLS__(self, i, tokens):
+        if i.nextbool():
+            pass
+
+    def __SNOMED__(self, i, tokens):
+        if i.nextbool():
+            pass
+
+    def __MulWords__(self, i, tokens):
+        #'MulWords' : 'countPhrase | freeling | Ngram',
+        choice = i.nextint(3)
+
+        if choice == 2:
+            ngram = i.nextint(2) + 2
+
+        return tokens
 
     def __Ngram__(self, i, tokens):
         #i(2,4)
@@ -415,37 +462,71 @@ class MyGrammar(GrammarGE):
             result += list(nltk.ngrams(tokens, i))
         return result
 
-    def __Embed__(self, i, text, tokenized):
-        if i.nextbool():
-            return self.__WordVec__(i, text)
+    def __Embed__(self, i, tokens):
+        # 'Embed' : 'wordVec | onehot | none',
+        choice = i.nextint(3)
+
+        # los objetos a codificar
+        objs = [[dict(t.__dict__) for t in tok] for tok in tokens]
+        # eliminar las propiedades inútiles
+        for tok in objs:
+            for t in tok:
+                t.pop('init')
+                t.pop('end')
+                t.pop('text')
+
+        choice = 0
+        if choice == 0:
+            # eliminar el texto y codificar normal
+            for tok in objs:
+                for t in tok:
+                    t.pop('norm')
+                    t.pop('vector')
+
+            vectors = self.__DictVect__(objs)
+            vectors = [v.toarray() for v in vectors]
+
+            matrices = []
+
+            for tok,vec in zip(tokens, vectors):
+                tok_matrix = np.vstack([t.vector for t in tok])
+                matrices.append(np.hstack((tok_matrix, vec)))
+
+            return matrices
+
+        elif choice == 1:
+            # eliminar el vector y codificar onehot
+            for tok in objs:
+                for t in tok:
+                    t.pop('vector')
+
+            return self.__DictVect__(objs)
+
         else:
-            return self.__Vectorizer__(i, tokenized)
+            # eliminar texto y vector y codificar normal
+            for tok in objs:
+                for t in tok:
+                    del t['norm']
+                    del t['vector']
 
-    def __WordVec__(self, i, documents):
-        return [[t.vector for t in nlp(sentence)] for sentence in documents]
+            return self.__DictVect__(objs)
 
-    def __SenseVec__(self, i):
-        pass
+    def __DictVect__(self, objs):
+        dv = DictVectorizer()
+        dv.fit(t for sent in objs for t in sent)
+        return [dv.transform(sent) for sent in objs]
 
-    def __CharEmbed__(self, i):
-        pass
+    # def __SenseVec__(self, i, tokens):
+    #     i.nextbool()
 
-    def __Vectorizer__(self, i, documents):
-        """Devuelve la representación vectorizada como un
-        vector de numpy."""
-        if i.nextbool():
-            vectorizer = CountVectorizer(analyzer = lambda x: x)
-            X = vectorizer.fit_transform(documents)
-            return X
-        else:
-            vectorizer = TfidfVectorizer(analyzer = lambda x: x)
-            X = vectorizer.fit_transform(documents)
-            return X
+    # def __CharEmbed__(self, i, tokens):
+    #     i.nextbool()
+
 
 def main():
     grammar = MyGrammar()
     # random.seed(42)
-    i = Individual([random.uniform(0,1) for i in range(100)])
+    i = Individual([0] + [random.uniform(0,1) for i in range(100)])
     print(yaml.dump(grammar.sample(i)))
     i.reset()
 
