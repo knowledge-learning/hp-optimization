@@ -334,8 +334,27 @@ class MyGrammar(GrammarGE):
         return self._class(i)
 
     def _ab(self, i, trainX, trainY, devX):
-        if i.nextbool():
-            return self._class(i)
+        assert len(trainX) == len(trainY)
+
+        choice = i.nextint(2)
+
+        if choice == 0:
+            # classifier
+
+            # calcular la forma de la entrada
+            rows, cols = trainX[0].shape
+            intput_shape = cols
+
+            clss = self._class(i, intput_shape, 1)
+
+            # construir la entrada train
+            trainX = np.vstack(trainX)
+            trainY = np.hstack(trainY)
+
+            clss.fit(trainX, trainY)
+
+            # construir la entrada dev
+            return [clss.predict(x) for x in devX]
         else:
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
