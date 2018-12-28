@@ -315,6 +315,15 @@ class MyGrammar(GrammarGE):
             #        (len(test_A) + len(test_B) + len(test_C) * 6)
 
             return (test_C == result_C).sum() / (len(test_C) * 6)
+        elif choice == 1:
+            # Ejecutar tareas AB juntas y C en secuencia
+
+            # Tarea AB
+            labels_AB = [np.asarray(sent) for sent in labels_map]
+            result_AB = self._a(ind, train, labels_A[:-validation_size], dev)
+
+            # Tarea C
+            result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
         else:
             raise InvalidPipeline("Only A B C supported so far")
 
