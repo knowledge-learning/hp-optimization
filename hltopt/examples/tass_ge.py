@@ -333,11 +333,12 @@ class MyGrammar(GrammarGE):
     def _bc(self, i):
         return self._class(i)
 
-    def _ab(self, i):
+    def _ab(self, i, trainX, trainY, devX)):
         if i.nextbool():
             return self._class(i)
         else:
-            return self._seq(i)
+            # sequence classifier
+            raise InvalidPipeline("Sequence not supported yet")
 
     def _a(self, i, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
