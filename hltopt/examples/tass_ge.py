@@ -242,10 +242,12 @@ class MyGrammar(GrammarGE):
         # mapping de la tarea C (perdón)
         trainCx = []
         trainCy = []
+        trainBy = []
 
         for feats, sent, lbls, rels in zip(rep, tokens, labels, relations):
             rel_pairs = []
             rel_map = []
+            rel_clss = []
             for i,t1 in enumerate(sent):
                 if (t1.init, t1.end) not in lbls:
                     continue
@@ -261,7 +263,12 @@ class MyGrammar(GrammarGE):
                     id1, lbl1 = lbls[(t1.init, t1.end)]
                     id2, lbl2 = lbls[(t2.init, t2.end)]
 
+                    lbl1e = [1,0] if lbl1 == 'Concept' else [0,1]
+                    lbl2e = [1,0] if lbl2 == 'Concept' else [0,1]
+                    lble = np.asarray(lbl1e + lbl2e)
+
                     rel_pairs.append(np.hstack((feats[i], feats[j])))
+                    rel_clss.append(lble)
 
                     # calculamos todas las relaciones entre id1 y id2
                     for rel, org, dest in rels:
@@ -270,13 +277,19 @@ class MyGrammar(GrammarGE):
 
                     rel_map.append(pair_map)
 
-            assert len(rel_pairs) == len(rel_map)
+            assert len(rel_pairs) == len(rel_map) and len(rel_pairs) == len(rel_clss)
 
             rel_pairs = np.vstack(rel_pairs)
             rel_map = mappingC.transform(rel_map).toarray()
+            rel_clss = np.vstack(rel_clss)
 
             trainCx.append(rel_pairs)
             trainCy.append(rel_map)
+            trainBy.append(rel_clss)
+
+        trainBy = [np.hstack((b,c)) for b,c in zip(trainBy, trainCy)]
+
+        print(trainBy)
 
         if choice == 0:
             # Ejecutar tareas A, B y C en secuencia
@@ -321,7 +334,7 @@ class MyGrammar(GrammarGE):
 
             # Tarea AB
             labels_AB = [np.asarray(sent) for sent in labels_map]
-            result_AB = self._a(ind, train, labels_A[:-validation_size], dev)
+            result_AB = self._a(ind, train, labels_AB[:-validation_size], dev)
 
             # Tarea C
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
@@ -615,7 +628,7 @@ class MyGrammar(GrammarGE):
     def _delpunt(self, i, texts):
         #yes | no
         if i.nextbool():
-            return [t.translate({c:None for c in string.punctuation}) for t in texts]
+            return [t.translate({c:" " for c in string.punctuation}) for t in texts]
         else:
             return texts
 
@@ -750,7 +763,7 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
-    i = Individual([0] * 100)
+    i = Individual([0.3] + [0] * 100)
     print(yaml.dump(grammar.sample(i)))
     i.reset()
     print(grammar.evaluate(i))
