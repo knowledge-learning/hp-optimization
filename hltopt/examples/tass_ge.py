@@ -333,7 +333,7 @@ class MyGrammar(GrammarGE):
     def _bc(self, i):
         return self._class(i)
 
-    def _ab(self, i, trainX, trainY, devX)):
+    def _ab(self, i, trainX, trainY, devX):
         if i.nextbool():
             return self._class(i)
         else:
