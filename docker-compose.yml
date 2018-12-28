@@ -28,4 +28,4 @@ services:
       - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
     working_dir: "/home/hlt"
-    command: "python -m hltopt.examples.tass_ge"
+    command: "python -u -m hltopt.examples.tass_ge"

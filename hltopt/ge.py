@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import yaml
 import random
 import numpy as np
 
@@ -19,7 +20,7 @@ def make_rand_vector(dims):
 
 class Individual:
     def __init__(self, values):
-        self._values = [min(1,max(0,v)) for v in values]
+        self._values = [min(0.99999,max(0.00001,v)) for v in values]
         self._current = 0
 
     def reset(self):
@@ -136,10 +137,17 @@ class GE(Metaheuristic):
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
+
+        print(yaml.dump(self.grammar.sample(ind)))
+        ind.reset()
+
         try:
-            return self.grammar.evaluate(ind)
-        except InvalidPipeline:
-            return 0
+            f = self.grammar.evaluate(ind)
+        except InvalidPipeline as e:
+            print(str(e))
+            f = 0
+
+        return f
 
     def run(self, evals:int):
         """Ejecuta la metaheurística hasta el número de evaluaciones indicado"""
