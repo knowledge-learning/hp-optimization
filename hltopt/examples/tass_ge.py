@@ -355,7 +355,23 @@ class MyGrammar(GrammarGE):
         return self._class(i)
 
     def _bc(self, i):
-        return self._class(i)
+        assert len(trainX) == len(trainY)
+
+        # calcular la forma de la entrada
+        rows, cols = trainX[0].shape
+        intput_shape = cols
+        rows, cols = trainY[0].shape
+        output_shape = cols
+
+        clss = self._class(i, intput_shape, output_shape)
+
+        # construir la entrada train
+        trainX = np.vstack(trainX)
+        trainY = np.vstack(trainY)
+
+        clss.fit(trainX, trainY)
+
+        return [clss.predict(x) for x in devX]
 
     def _ab(self, i, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
