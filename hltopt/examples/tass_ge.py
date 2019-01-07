@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import pprint
 import bisect
 import os
 import pprint
@@ -282,7 +283,7 @@ class MyGrammar(GrammarGE):
 
             # relations
             val_relations = []
-            for lbl, resC, mapC in zip(val_labels, result_C, valCmapping):
+            for lbl, resC, mapC in zip(val_labels, result_C, valCmapping[-validation_size:]):
                 sentence_rels = []
                 for rels, (org, dest) in zip(resC, mapC):
                     if org not in lbl or dest not in lbl:
@@ -303,21 +304,6 @@ class MyGrammar(GrammarGE):
 
             return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
 
-            test = labels_map[-validation_size:]
-            test_A = np.hstack([np.asarray([1 if l else 0 for l in sent]) for sent in test])
-            result_A = np.hstack(result_A)
-
-            test_B = np.hstack([np.asarray(sent) for sent in test])[(test_A == 1) & (result_A == 1)]
-            result_B = np.hstack(result_B)[(test_A == 1) & (result_A == 1)]
-
-            test_C = np.vstack(trainCy[-validation_size:])
-            result_C = np.vstack(result_C)
-
-            # return ((test_A == result_A).sum() + (test_B == result_B).sum() + (test_C == result_C).sum()) / \
-            #        (len(test_A) + len(test_B) + len(test_C) * 6)
-
-            return (test_C == result_C).sum() / (len(test_C) * 6)
-
         elif choice == 1:
             # Ejecutar tareas AB juntas y C en secuencia
 
@@ -329,6 +315,41 @@ class MyGrammar(GrammarGE):
             trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
+            # Calcular fitness
+            # Labels
+            ids = 0
+            val_labels = []
+            for sent, resAB in zip(tokens[-validation_size:], result_AB):
+                sentence_labels = {}
+                for tok, clsAB in zip(sent, resAB):
+                    if clsAB:
+                        sentence_labels[(tok.init, tok.end)] = (ids, clsAB)
+                        ids += 1
+                val_labels.append(sentence_labels)
+
+            # relations
+            val_relations = []
+            for lbl, resC, mapC in zip(val_labels, result_C, valCmapping[-validation_size:]):
+                sentence_rels = []
+                for rels, (org, dest) in zip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglb = lbl[org]
+                    destid, destlb = lbl[dest]
+
+                    rels = mappingC.inverse_transform(rels.reshape(1,-1))[0]
+                    for r in rels:
+                        if r in ['subject', 'target']:
+                            if orglb == 'Action' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+                        else:
+                            if orglb == 'Concept' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+
+                val_relations.append(sentence_rels)
+
+            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
+
         elif choice == 2:
             # Ejecutar tarea A y luego BC
 
@@ -338,7 +359,67 @@ class MyGrammar(GrammarGE):
 
             # Tarea BC
             trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True)
-            result_BC = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
+            result_BC = self._bc(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
+
+            # Calcular fitness
+            # Labels
+            ids = 0
+            val_labels = []
+            for sent, resA, resB in zip(tokens[-validation_size:], result_A, result_BC):
+                sentence_labels = {}
+                for tok, clsA in zip(sent, resA):
+                    if clsA == 1:
+                        sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
+                        ids += 1
+                val_labels.append(sentence_labels)
+
+            # compute actual labels
+            # labels map
+            bc_labels_map = {
+                (0,0): 'None',
+                (1,0): 'Concept',
+                (0,1):  'Action'
+            }
+
+            for lbl, resC, mapC in zip(val_labels, result_BC, valCmapping[-validation_size:]):
+                for rels, (org, dest) in zip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglbs = lbl[org]
+                    destid, destlbs = lbl[dest]
+
+                    orglbl = bc_labels_map[tuple(rels[-4:-2])]
+                    destlbl = bc_labels_map[tuple(rels[-2:])]
+
+                    if orglbl in orglbs:
+                        orglbs[orglbl] += 1
+                    if destlbl in  destlbs:
+                        destlbs[destlbl] += 1
+
+            val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
+
+            # # compute relations
+            val_relations = []
+            for lbl, resC, mapC in zip(val_labels, result_BC, valCmapping[-validation_size:]):
+                sentence_rels = []
+                for rels, (org, dest) in zip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglb = lbl[org]
+                    destid, destlb = lbl[dest]
+
+                    rels = mappingC.inverse_transform(rels[:-4].reshape(1,-1))[0]
+                    for r in rels:
+                        if r in ['subject', 'target']:
+                            if orglb == 'Action' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+                        else:
+                            if orglb == 'Concept' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+
+                val_relations.append(sentence_rels)
+
+            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
 
         else:
             # Ejecutar Tarea ABC junta
@@ -346,6 +427,74 @@ class MyGrammar(GrammarGE):
             # Tarea ABC
             trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
             result_ABC = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
+
+            # Calcular fitness
+
+            # compute actual labels
+            # labels map
+            bc_labels_map = {
+                (0,0): 'None',
+                (1,0): 'Concept',
+                (0,1):  'Action'
+            }
+
+            # Labels
+            ids = 0
+            val_labels = []
+            for sent in tokens[-validation_size:]:
+                sentence_labels = {}
+                for tok in sent:
+                    sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0, 'None':0})
+                    ids += 1
+                val_labels.append(sentence_labels)
+
+            # compute actual labels
+            # labels map
+            bc_labels_map = {
+                (0,0): 'None',
+                (1,0): 'Concept',
+                (0,1): 'Action',
+                (1,1): 'None'
+            }
+
+            for lbl, resC, mapC in zip(val_labels, result_ABC, valCmapping[-validation_size:]):
+                for rels, (org, dest) in zip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglbs = lbl[org]
+                    destid, destlbs = lbl[dest]
+
+                    orglbl = bc_labels_map[tuple(rels[-4:-2])]
+                    destlbl = bc_labels_map[tuple(rels[-2:])]
+
+                    orglbs[orglbl] += 1
+                    destlbs[destlbl] += 1
+
+            val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
+            val_labels = [{ tok: (ids, lbl) for tok, (ids,lbl) in sent.items() if lbl != 'None'} for sent in val_labels]
+
+            # # compute relations
+            val_relations = []
+            for lbl, resC, mapC in zip(val_labels, result_ABC, valCmapping[-validation_size:]):
+                sentence_rels = []
+                for rels, (org, dest) in zip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglb = lbl[org]
+                    destid, destlb = lbl[dest]
+
+                    rels = mappingC.inverse_transform(rels[:-4].reshape(1,-1))[0]
+                    for r in rels:
+                        if r in ['subject', 'target']:
+                            if orglb == 'Action' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+                        else:
+                            if orglb == 'Concept' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+
+                val_relations.append(sentence_rels)
+
+            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
 
     def _score(self, train_labels, val_labels, train_relations, val_relations):
         assert len(train_labels) == len(val_labels)
@@ -447,8 +596,8 @@ class MyGrammar(GrammarGE):
                     pair_map = {}
 
                     # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None,None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None,None))
+                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
+                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
 
                     if build_b:
                         lbl1e = label_maps[lbl1]
@@ -923,7 +1072,7 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
-    i = Individual([0] + [0] * 100)
+    i = Individual([0.9] + [0] * 100)
     print(yaml.dump(grammar.sample(i)))
     i.reset()
     print(grammar.evaluate(i))
