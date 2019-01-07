@@ -1072,13 +1072,20 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
-    i = Individual([0.9] + [0] * 100)
-    print(yaml.dump(grammar.sample(i)))
-    i.reset()
-    print(grammar.evaluate(i))
+    for i in range(10000):
+        random.seed(i)
+        print("-------\nRandom seed %i" % i)
 
-    # ge = GE(grammar)
-    # ge.run(100)
+        try:
+            ind = Individual([random.uniform(0,1) for _ in range(100)])
+            print(yaml.dump(grammar.sample(ind)))
+            ind.reset()
+            print(grammar.evaluate(ind))
+        except Exception as e:
+            print("Error", str(e))
+
+            with open('errors.log', 'a') as fp:
+                fp.write(str(i, "\t", str(e), "\n"))
 
 
 if __name__ == '__main__':
