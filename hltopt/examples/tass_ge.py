@@ -149,6 +149,11 @@ class MyGrammar(GrammarGE):
         validation_B = dataset_path / 'develop' / 'gold' / 'output_B_develop.txt'
         validation_C = dataset_path / 'develop' / 'gold' / 'output_C_develop.txt'
 
+        # validation = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
+        # validation_A = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_A_scenario1.txt'
+        # validation_B = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_B_scenario1.txt'
+        # validation_C = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_C_scenario1.txt'
+
         validation_sents = [s for s in validation.open().read().split('\n') if s]
         validation_size = len(validation_sents)
 
@@ -260,10 +265,44 @@ class MyGrammar(GrammarGE):
             result_B = self._b(ind, trainX, trainY, dev)
 
             # Tarea C
-            trainCx, trainCy = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
+            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
             # Calcular fitness
+            # Labels
+            ids = 0
+            val_labels = []
+            for sent, resA, resB in zip(tokens[-validation_size:], result_A, result_B):
+                sentence_labels = {}
+                for tok, clsA, clsB in zip(sent, resA, resB):
+                    if clsA == 1:
+                        sentence_labels[(tok.init, tok.end)] = (ids, clsB)
+                        ids += 1
+                val_labels.append(sentence_labels)
+
+            # relations
+            val_relations = []
+            for lbl, resC, mapC in zip(val_labels, result_C, valCmapping):
+                sentence_rels = []
+                for rels, (org, dest) in zip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglb = lbl[org]
+                    destid, destlb = lbl[dest]
+
+                    rels = mappingC.inverse_transform(rels.reshape(1,-1))[0]
+                    for r in rels:
+                        if r in ['subject', 'target']:
+                            if orglb == 'Action' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+                        else:
+                            if orglb == 'Concept' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+
+                val_relations.append(sentence_rels)
+
+            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
+
             test = labels_map[-validation_size:]
             test_A = np.hstack([np.asarray([1 if l else 0 for l in sent]) for sent in test])
             result_A = np.hstack(result_A)
@@ -287,7 +326,7 @@ class MyGrammar(GrammarGE):
             result_AB = self._a(ind, train, labels_AB[:-validation_size], dev)
 
             # Tarea C
-            trainCx, trainCy = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
+            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
         elif choice == 2:
@@ -298,22 +337,93 @@ class MyGrammar(GrammarGE):
             result_A = self._a(ind, train, labels_A[:-validation_size], dev)
 
             # Tarea BC
-            trainCx, trainCy = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True)
+            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True)
             result_BC = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
         else:
             # Ejecutar Tarea ABC junta
 
             # Tarea ABC
-            trainCx, trainCy = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
+            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
             result_ABC = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
-            raise InvalidPipeline("Only A B C supported so far")
+    def _score(self, train_labels, val_labels, train_relations, val_relations):
+        assert len(train_labels) == len(val_labels)
+        assert len(train_relations) == len(val_relations)
+
+        # score counts
+        correctA = 0
+        partialA = 0
+        missingA = 0
+        spuriousA = 0
+
+        correctB = 0
+        incorrectB = 0
+
+        correctC = 0
+        missingC = 0
+        spuriousC = 0
+
+        #label maps
+        t2v = {}
+        v2t = {}
+
+        for l1, l2 in zip(train_labels, val_labels):
+            for start, end in l1:
+                if (start, end) in l2:
+                    t2v[l1[(start, end)][0]] = l2[(start,end)][0]
+                    v2t[l2[(start, end)][0]] = l1[(start,end)][0]
+
+                    correctA += 1
+                    if l1[(start, end)][1] == l2[(start, end)][1]:
+                        correctB += 1
+                    else:
+                        incorrectB += 1
+                else:
+                    missingA += 1
+
+            for start, end in l2:
+                if not (start, end) in l1:
+                    spuriousA += 1
+
+        for r1, r2 in zip(train_relations, val_relations):
+            for r,to,td in r1:
+                if not to in t2v or not td in t2v:
+                    missingC += 1
+                    continue
+
+                vo = t2v[to]
+                vd = t2v[td]
+
+                if (r,vo,vd) in r2:
+                    correctC += 1
+                else:
+                    missingC += 1
+
+        for r1, r2 in zip(train_relations, val_relations):
+            for r,vo,vd in r2:
+                if not vo in v2t or not vd in v2t:
+                    spuriousC += 1
+                    continue
+
+                to = v2t[vo]
+                td = v2t[vd]
+
+                if (r,to,td) not in r1:
+                    spuriousC += 1
+
+
+        top = (correctA + 0.5 * partialA + correctB + correctC)
+        precision = top / (correctA + partialA + correctB + incorrectB + spuriousA + correctC + spuriousC)
+        recall = top / (correctA + partialA + correctB + incorrectB + missingA + correctC + missingC)
+
+        return 2 * precision * recall / (precision + recall)
 
     def _build_c_mapping(self, rep, tokens, labels, relations, mappingC, build_b=False, build_a=False):
         # mapping de la tarea C (perdón)
         trainCx = []
         trainCy = []
+        valCmapping = []
 
         label_maps = {
             'Action': [0,1],
@@ -325,6 +435,7 @@ class MyGrammar(GrammarGE):
             rel_pairs = []
             rel_map = []
             rel_clss = []
+            sent_mapp = []
             for i,t1 in enumerate(sent):
                 if (t1.init, t1.end) not in lbls and not build_a:
                     continue
@@ -336,7 +447,6 @@ class MyGrammar(GrammarGE):
                     pair_map = {}
 
                     # id1, id2 son los id de 2 tokens
-                    # que son keywords porque están en el mapping A
                     id1, lbl1 = lbls.get((t1.init, t1.end), (None,None))
                     id2, lbl2 = lbls.get((t2.init, t2.end), (None,None))
 
@@ -354,7 +464,9 @@ class MyGrammar(GrammarGE):
                             pair_map[rel] = True
 
                     rel_map.append(pair_map)
+                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
 
+            valCmapping.append(sent_mapp)
             rel_pairs = np.vstack(rel_pairs)
             rel_map = mappingC.transform(rel_map).toarray()
 
@@ -367,11 +479,9 @@ class MyGrammar(GrammarGE):
             trainCx.append(rel_pairs)
             trainCy.append(rel_map)
 
-        print(trainCy)
+        return trainCx, trainCy, valCmapping
 
-        return trainCx, trainCy
-
-    def _abc(self, i):
+    def _abc(self, i, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
 
         # calcular la forma de la entrada
@@ -813,7 +923,7 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
-    i = Individual([0.9] + [0] * 100)
+    i = Individual([0] + [0] * 100)
     print(yaml.dump(grammar.sample(i)))
     i.reset()
     print(grammar.evaluate(i))
