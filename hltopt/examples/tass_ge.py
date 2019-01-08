@@ -13,6 +13,8 @@ import gensim
 import yaml
 import numpy as np
 
+from scipy import sparse as sp
+
 from pathlib import Path
 
 from sklearn.naive_bayes import MultinomialNB
@@ -102,7 +104,7 @@ class MyGrammar(GrammarGE):
             #las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño
             'FormatDen': 'grow | shrink | same',
             # Final layer
-            'FLayer'   : 'crf | lr',
+            'FLayer'   : 'sigmoid | softmax',
 
             'Repr'     : 'Token Prep SemFeat PosPrep MulWords Embed',
             'Token'    : 'wordTok',
@@ -126,6 +128,8 @@ class MyGrammar(GrammarGE):
         }
 
     def evaluate(self, ind:Individual):
+        FAST = True
+
         # load training data
         dataset_path = Path.cwd() / 'hltopt' / 'examples' / 'datasets' / 'tass18_task3'
 
@@ -145,22 +149,28 @@ class MyGrammar(GrammarGE):
 
                 self._parse_ann(sentences, goldA, goldB, goldC, labels, relations)
 
-        validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
-        validation_A = dataset_path / 'develop' / 'gold' / 'output_A_develop.txt'
-        validation_B = dataset_path / 'develop' / 'gold' / 'output_B_develop.txt'
-        validation_C = dataset_path / 'develop' / 'gold' / 'output_C_develop.txt'
+                if FAST:
+                    break
 
-        # validation = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
-        # validation_A = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_A_scenario1.txt'
-        # validation_B = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_B_scenario1.txt'
-        # validation_C = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_C_scenario1.txt'
+        if FAST:
+            validation_size = 10
+        else:
+            validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
+            validation_A = dataset_path / 'develop' / 'gold' / 'output_A_develop.txt'
+            validation_B = dataset_path / 'develop' / 'gold' / 'output_B_develop.txt'
+            validation_C = dataset_path / 'develop' / 'gold' / 'output_C_develop.txt'
 
-        validation_sents = [s for s in validation.open().read().split('\n') if s]
-        validation_size = len(validation_sents)
+            # validation = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
+            # validation_A = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_A_scenario1.txt'
+            # validation_B = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_B_scenario1.txt'
+            # validation_C = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_C_scenario1.txt'
 
-        texts.extend(validation_sents)
+            validation_sents = [s for s in validation.open().read().split('\n') if s]
+            validation_size = len(validation_sents)
 
-        self._parse_ann(validation_sents, validation_A, validation_B, validation_C, labels, relations)
+            texts.extend(validation_sents)
+
+            self._parse_ann(validation_sents, validation_A, validation_B, validation_C, labels, relations)
 
         return self._pipeline(ind, texts, validation_size, labels, relations)
 
@@ -309,7 +319,7 @@ class MyGrammar(GrammarGE):
 
             # Tarea AB
             labels_AB = [np.asarray(sent) for sent in labels_map]
-            result_AB = self._a(ind, train, labels_AB[:-validation_size], dev)
+            result_AB = self._ab(ind, train, labels_AB[:-validation_size], dev)
 
             # Tarea C
             trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
@@ -426,7 +436,7 @@ class MyGrammar(GrammarGE):
 
             # Tarea ABC
             trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
-            result_ABC = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
+            result_ABC = self._abc(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
             # Calcular fitness
 
@@ -647,6 +657,8 @@ class MyGrammar(GrammarGE):
 
         clss.fit(trainX, trainY)
 
+        return [clss.predict(x) for x in devX]
+
     def _bc(self, i, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
 
@@ -777,7 +789,7 @@ class MyGrammar(GrammarGE):
         else:
             return self._nn(i, input_shape, output_shape)
 
-        if output_shape > 1:
+        if output_shape > 1 and des < 4:
             clss = OneVsRestClassifier(clss)
 
         return clss
@@ -796,31 +808,38 @@ class MyGrammar(GrammarGE):
 
     def _kernel(self, i):
         #linear | rbf | poly
-        return i.choose('lineal', 'rbf', 'poly')
+        return i.choose('linear', 'rbf', 'poly')
 
     def _nn(self, i, input_size, output_size):
-        # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
-        model = Sequential()
-        option = i.nextint(3)
+        try:
+            # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
+            model = Sequential()
+            option = i.nextint(3)
 
-        x = Input(shape=(input_size, 50))
-        dropout = self._drop(i)
+            x = Input(shape=(input_size, 50))
+            dropout = self._drop(i)
 
-        if option == 0:
-            y = self._cvlayers(i, x, dropout)
-            y = self._dlayers(i, y, dropout)
-            y = self._flayer(i, y, output_size, dropout)
-        elif option == 1:
-            y = self._rlayers(i, x, dropout)
-            y = self._dlayers(i, y, dropout)
-            y = self._flayer(i, y, output_size, dropout)
-        else:
-            y = self._dlayers(i, x, dropout)
-            y = self._flayer(i, y, output_size, dropout)
+            if option == 0:
+                y = self._cvlayers(i, x, dropout)
+                y = self._dlayers(i, y, dropout)
+                y = self._flayer(i, y, output_size, dropout)
+            elif option == 1:
+                y = self._rlayers(i, x, dropout)
+                y = self._dlayers(i, y, dropout)
+                y = self._flayer(i, y, output_size, dropout)
+            else:
+                y = self._dlayers(i, x, dropout)
+                y = self._flayer(i, y, output_size, dropout)
 
-        model = Model(inputs=x, outputs=y)
-        # model.compile()
-        return model
+            model = Model(inputs=x, outputs=y)
+            model.compile(optimizer='adam', loss='categorical_crossentropy')
+            return model
+        except ValueError as e:
+            msg = str(e)
+            if 'out of bounds' in msg:
+                raise InvalidPipeline('Bad NN architecture')
+            else:
+                raise e
 
     def _drop(self, i):
         return i.nextfloat(0.1, 0.5)
@@ -910,11 +929,7 @@ class MyGrammar(GrammarGE):
         return i.nextint(90)+10
 
     def _flayer(self, i, model, output_size, dropout):
-        if output_size == 1:
-            activation = 'sigmoid'
-        else:
-            activation = 'softmax'
-
+        activation = i.choose('sigmoid', 'softmax')
         z = Dense(output_size, activation=activation)(model)
         z = Dropout(dropout)(z)
         return z
@@ -1036,7 +1051,6 @@ class MyGrammar(GrammarGE):
                     t.pop('vector')
 
             vectors = self._dictvect(objs)
-            vectors = [v.toarray() for v in vectors]
 
             matrices = []
 
@@ -1066,13 +1080,13 @@ class MyGrammar(GrammarGE):
     def _dictvect(self, objs):
         dv = DictVectorizer()
         dv.fit(t for sent in objs for t in sent)
-        return [dv.transform(sent) for sent in objs]
-
+        return [dv.transform(sent).toarray() for sent in objs]
+#
 
 def main():
     grammar = MyGrammar()
 
-    for i in range(10000):
+    for i in range(4, 10000):
         random.seed(i)
         print("-------\nRandom seed %i" % i)
 
@@ -1081,12 +1095,8 @@ def main():
             print(yaml.dump(grammar.sample(ind)))
             ind.reset()
             print(grammar.evaluate(ind))
-        except Exception as e:
+        except InvalidPipeline as e:
             print("Error", str(e))
-
-            with open('errors.log', 'a') as fp:
-                fp.write(str(i, "\t", str(e), "\n"))
-
 
 if __name__ == '__main__':
     main()
