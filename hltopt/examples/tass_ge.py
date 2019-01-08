@@ -739,6 +739,8 @@ class MyGrammar(GrammarGE):
 
         clss = self._class(i, intput_shape, 1)
 
+
+
         # construir la entrada train
         trainX = np.vstack(trainX)
         trainY = np.hstack(trainY)
