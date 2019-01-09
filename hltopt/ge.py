@@ -3,6 +3,7 @@
 import yaml
 import random
 import numpy as np
+import json
 
 from .metaheuristic import Metaheuristic
 from random import gauss
@@ -62,7 +63,7 @@ class Individual:
 
 
 class GE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, crossover=0.1):
+    def __init__(self, grammar, popsize=100, selected=0.1, rate=0.9):
         """Representa una metaheurística de Evolución Gramatical.
 
         - `popsize`: tamaño de la población
@@ -71,11 +72,15 @@ class GE(Metaheuristic):
         """
         super().__init__()
 
-        self.grammar = grammar
+        self._grammar = grammar
         self.popsize = popsize
-        self.indsize = self.grammar.complexity()
-        self.selected = int(selected * self.popsize)
-        self.crossover = crossover
+        self.indsize = self._grammar.complexity()
+        self.rate = rate
+
+        if isinstance(selected, float):
+            selected = int(selected * popsize)
+
+        self.selected = selected
 
     def _init_population(self):
         """Construye la población inicial"""
@@ -90,9 +95,10 @@ class GE(Metaheuristic):
         list_distances = []
         for a in population:
             for b in population:
-                list_distances.append(self.grammar.distance(a,b))
+                list_distances.append(self._grammar.distance(a,b))
 
-        self.threshold = sorted(list_distances)[len(list_distances)//2]
+        # self.threshold = sorted(list_distances)[len(list_distances)//2]
+        self.threshold = max(list_distances) / 2
         print("Initial threshold:", self.threshold)
 
         return population
@@ -118,14 +124,20 @@ class GE(Metaheuristic):
 
         lmin = 0
         lmax = 1
+        iters = 0
 
         while True:
+            iters += 1
             print('.', end='')
 
             mutation = make_rand_vector(len(ind))
             lmid = (lmin + lmax)/2
             new_ind = Individual([v + lmid*x for v,x in zip(ind,mutation)])
-            dist = self.grammar.distance(ind, new_ind)
+            dist = self._grammar.distance(ind, new_ind)
+
+            if iters > 100:
+                print('*')
+                return new_ind
 
             if dist < self.threshold:
                 lmin = lmid
@@ -138,11 +150,11 @@ class GE(Metaheuristic):
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
 
-        print(yaml.dump(self.grammar.sample(ind)))
-        ind.reset()
+        print(yaml.dump(self._grammar.sample(ind)))
 
         try:
-            f = self.grammar.evaluate(ind)
+            ind.reset()
+            f = self._grammar.evaluate(ind)
         except InvalidPipeline as e:
             print(str(e))
             f = 0
@@ -155,15 +167,15 @@ class GE(Metaheuristic):
         self.it = 0
         self.population = self._init_population()
         self.fitness = [self._evaluate(i) for i in self.population]
-
         self.current_best, self.current_fn = None, 0
-        self.avg_fitness = []
-        self.best_fitness = []
 
         while self.it < evals:
             best_individuals = self._select(self.population, self.fitness)
             self.population = self._breed(best_individuals)
             self.fitness = [self._evaluate(i) for i in self.population]
+
+            GEEncoder.grammar = self._grammar
+            self.save(GEEncoder)
 
             for ind, fn in zip(self.population, self.fitness):
                 if fn > self.current_fn:
@@ -171,14 +183,22 @@ class GE(Metaheuristic):
                     self.current_fn = fn
                     print("Updated best: ", self.current_fn)
 
-            self.avg_fitness.append(np.mean(self.fitness))
-            self.best_fitness.append(self.current_best)
-
-            self.threshold *= 0.95
+            self.threshold *= self.rate
+            self.it += 1
             print("Threshold:", self.threshold)
 
         return self.current_best
 
+
+class GEEncoder(json.encoder.JSONEncoder):
+    grammar = None
+
+    def default(self, obj):
+        if isinstance(obj, Individual):
+            obj.reset()
+            enc = GEEncoder.grammar.sample(obj)
+            obj.reset()
+            return enc
 
 class GrammarGE:
     def evaluate(self, element) -> float:

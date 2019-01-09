@@ -1088,7 +1088,7 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
-    for i in range(4, 10000):
+    for i in range(20, 10000):
         random.seed(i)
         print("-------\nRandom seed %i" % i)
 

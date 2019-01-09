@@ -33,10 +33,6 @@ class MyGrammar(GrammarGE):
         }
 
     def evaluate(self, i:Individual):
-        print(i)
-        print(self.sample(i))
-        i.reset()
-
         # preprocesamiento
         if i.nextbool():
             sw = None
@@ -58,15 +54,13 @@ class MyGrammar(GrammarGE):
         X = vect.fit_transform(self.sentences)
         X = reductor.fit_transform(X)
 
-        print(X.shape)
-
         if isinstance(clas, GaussianNB) and hasattr(X, 'toarray'):
             X = X.toarray()
 
         score = 0
-        n = 1
+        n = 3
         for _ in range(n):
-            X_train, X_test, y_train, y_test = train_test_split(X, self.classes, test_size=0.2)
+            X_train, X_test, y_train, y_test = train_test_split(X, self.classes, test_size=0.33)
             clas.fit(X_train, y_train)
             score += clas.score(X_test, y_test)
 
@@ -77,10 +71,10 @@ class MyGrammar(GrammarGE):
 
     def _classifier(self, i:Individual):
         # escoger entre SVM, NB y LR
-        return i.choose(self._svm, self._lr, self._nb)(i)
+        return i.choose(self._nb, self._lr, self._svm)(i)
 
     def _svm(self, i:Individual):
-        return SVC(kernel=i.choose('linear', 'rbf'))
+        return SVC(kernel=i.choose('linear', 'rbf'), gamma='scale')
 
     def _nb(self, i:Individual):
         return GaussianNB()
@@ -121,11 +115,8 @@ def main():
     grammar = MyGrammar(*load_corpus())
 
     print("Running heuristic")
-    ge = GE(grammar, popsize=10, selected=0.5)
-    ge.run(5)
-
-    print("avg fitness", ge.avg_fitness)
-    print("best fitness", ge.best_fitness)
+    ge = GE(grammar, popsize=10, selected=0.5, rate=0.975)
+    ge.run(100)
 
 
 if __name__ == '__main__':

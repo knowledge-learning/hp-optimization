@@ -21,7 +21,7 @@ services:
     working_dir: "/home/hlt"
     command: "pytest"
 
-  example:
+  tass:
     image: "matcomuh/ml:latest"
     volumes:
       - ".:/home/hlt"
@@ -29,3 +29,12 @@ services:
       - "~/nltk_data:/root/nltk_data"
     working_dir: "/home/hlt"
     command: "python -u -m hltopt.examples.tass_ge"
+
+  movies:
+    image: "matcomuh/ml:latest"
+    volumes:
+      - ".:/home/hlt"
+      - "~/gensim-data:/root/gensim-data"
+      - "~/nltk_data:/root/nltk_data"
+    working_dir: "/home/hlt"
+    command: "python -u -m hltopt.examples.sklearn_opinion_ge"
