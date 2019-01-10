@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import functools
 import pprint
 import bisect
 import os
@@ -54,22 +55,38 @@ class Token:
         return repr(self.__dict__)
 
 
+def cached(func):
+    result = None
+    @functools.wraps(func)
+    def f(*args, **kwargs):
+        nonlocal result
+        if result is None:
+            result = func(*args, **kwargs)
+        return result
+    return f
+
+
 class Dataset:
     def __init__(self):
         self.texts = []
         self.labels = []
         self.relations = []
+        self.validation_size = 0
+        self.vectors = None
+        self.tokens = None
 
-    def load(self, path):
-        goldA = dataset_path / 'training' / 'gold' / ('output_A_' + file.name[6:])
-        goldB = dataset_path / 'training' / 'gold' / ('output_B_' + file.name[6:])
-        goldC = dataset_path / 'training' / 'gold' / ('output_C_' + file.name[6:])
+    def load(self, finput:Path):
+        goldA = finput.parent / ('output_A_' + finput.name[6:])
+        goldB = finput.parent / ('output_B_' + finput.name[6:])
+        goldC = finput.parent / ('output_C_' + finput.name[6:])
 
-        text = file.open().read()
+        text = finput.open().read()
         sentences = [s for s in text.split('\n') if s]
 
         self.texts.extend(sentences)
         self._parse_ann(sentences, goldA, goldB, goldC)
+
+        return len(sentences)
 
     def _parse_ann(self, sentences, goldA, goldB, goldC):
         sentences_length = [len(s) for s in sentences]
@@ -106,6 +123,37 @@ class Dataset:
 
         self.labels.extend(labelsA_doc)
         self.relations.extend(relations_doc)
+
+    def _check_repr(self):
+        if self.vectors is None or self.tokens is None:
+            raise ValueError("Preprocesing and representation is not ready yet.")
+
+    @cached
+    def _labels_map(self):
+        labels_map = []
+
+        for sent, lbls in zip(self.tokens, self.labels):
+            sent_map = []
+            for t in sent:
+                if (t.init, t.end) in lbls:
+                    lbl = lbls[(t.init, t.end)][1]
+                    sent_map.append(lbl)
+                else:
+                    sent_map.append('')
+
+            labels_map.append(sent_map)
+
+        return labels_map
+
+    def task_a_by_word(self):
+        self._check_repr()
+
+        labels_map = self._labels_map()
+        xtrain = self.vectors[:-self.validation_size]
+        ytrain = [np.asarray([1 if l else 0 for l in sent]) for sent in labels_map[:-self.validation_size]]
+        xdev = self.vectors[-self.validation_size:]
+
+        return xtrain, ytrain, xdev
 
 
 class MyGrammar(GrammarGE):
@@ -155,7 +203,7 @@ class MyGrammar(GrammarGE):
             'Act'      : 'sigmoid | relu | tanh',
             'MinSize'  : 'i(10,100)',
             'MaxSize'  : 'i(10,100)',
-            #las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño
+            # las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño
             'FormatDen': 'grow | shrink | same',
             # Final layer
             'FLayer'   : 'sigmoid | softmax',
@@ -183,44 +231,32 @@ class MyGrammar(GrammarGE):
 
     def evaluate(self, ind:Individual):
         FAST = True
+        TEST = False
 
         # load training data
         dataset_path = Path.cwd() / 'hltopt' / 'examples' / 'datasets' / 'tass18_task3'
+        dataset = Dataset()
 
-        texts = []
-        labels = []
-        relations = []
-
-        for file in (dataset_path / 'training' / 'input').iterdir():
-            if file.name.endswith('.txt'):
-
+        for file in (dataset_path / 'training').iterdir():
+            if file.name.startswith('input'):
+                dataset.load(file)
 
                 if FAST:
                     break
 
         if FAST:
-            validation_size = 10
+            dataset.validation_size = 10
         else:
             validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
-            validation_A = dataset_path / 'develop' / 'gold' / 'output_A_develop.txt'
-            validation_B = dataset_path / 'develop' / 'gold' / 'output_B_develop.txt'
-            validation_C = dataset_path / 'develop' / 'gold' / 'output_C_develop.txt'
+            dataset.validation_size = dataset.load(validation)
 
-            # validation = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
-            # validation_A = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_A_scenario1.txt'
-            # validation_B = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_B_scenario1.txt'
-            # validation_C = dataset_path / 'test' / 'gold' / 'scenario1-ABC' / 'output_C_scenario1.txt'
+            if TEST:
+                test = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
+                dataset.validation_size = dataset.load(test)
 
-            validation_sents = [s for s in validation.open().read().split('\n') if s]
-            validation_size = len(validation_sents)
+        return self._pipeline(ind, dataset)
 
-            texts.extend(validation_sents)
-
-            self._parse_ann(validation_sents, validation_A, validation_B, validation_C, labels, relations)
-
-        return self._pipeline(ind, texts, validation_size, labels, relations)
-
-    def _pipeline(self, ind, texts, validation_size, labels, relations):
+    def _pipeline(self, ind, dataset):
         # 'Pipeline' : 'Repr A B C | Repr AB C |  Repr A BC | Repr ABC',
         choice = ind.nextint(4)
 
@@ -234,44 +270,38 @@ class MyGrammar(GrammarGE):
         #   ]),
         #   ...               <- oración 1
         # ]
-        rep, tokens = self._repr(ind, texts)
-        train = rep[:-validation_size]
-        dev = rep[-validation_size:]
-
-        # make sure we split right
-        assert len(rep) == len(train) + len(dev)
+        self._repr(ind, dataset)
 
         # mapping de la tarea A, B
-        labels_map = []
+        # labels_map = []
 
-        for sent, lbls in zip(tokens, labels):
-            sent_map = []
-            for t in sent:
-                if (t.init, t.end) in lbls:
-                    lbl = lbls[(t.init, t.end)][1]
-                    sent_map.append(lbl)
-                else:
-                    sent_map.append('')
+        # for sent, lbls in zip(tokens, labels):
+        #     sent_map = []
+        #     for t in sent:
+        #         if (t.init, t.end) in lbls:
+        #             lbl = lbls[(t.init, t.end)][1]
+        #             sent_map.append(lbl)
+        #         else:
+        #             sent_map.append('')
 
-            labels_map.append(sent_map)
+        #     labels_map.append(sent_map)
 
-        # mapping de la tarea C
-        mappingC = DictVectorizer()
-        mappingC.fit([{k:True for k in [
-            'is-a',
-            'part-of',
-            'property-of',
-            'same-as',
-            'subject',
-            'target',
-        ]}])
+        # # mapping de la tarea C
+        # mappingC = DictVectorizer()
+        # mappingC.fit([{k:True for k in [
+        #     'is-a',
+        #     'part-of',
+        #     'property-of',
+        #     'same-as',
+        #     'subject',
+        #     'target',
+        # ]}])
 
         if choice == 0:
             # Ejecutar tareas A, B y C en secuencia
 
             # Tarea A
-            labels_A = [np.asarray([1 if l else 0 for l in sent]) for sent in labels_map]
-            result_A = self._a(ind, train, labels_A[:-validation_size], dev)
+            result_A = self._a(ind, dataset)
 
             # Tarea B
             trainX = []
@@ -714,28 +744,29 @@ class MyGrammar(GrammarGE):
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
 
-    def _a(self, i, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
-
+    def _a(self, i, dataset:Dataset):
         choice = i.nextint(2)
 
         if choice == 0:
             # classifier
 
             # calcular la forma de la entrada
-            rows, cols = trainX[0].shape
+            rows, cols = dataset.vectors[0].shape
             intput_shape = cols
 
             clss = self._class(i, intput_shape, 1)
 
-            # construir la entrada train
-            trainX = np.vstack(trainX)
-            trainY = np.hstack(trainY)
+            if isinstance(clss, Model):
+                xtrain, ytrain, xdev = dataset.task_a_by_sentence()
+            else:
+                xtrain, ytrain, xdev = dataset.task_a_by_word()
+                xtrain = np.vstack(xtrain)
+                ytrain = np.hstack(ytrain)
 
-            clss.fit(trainX, trainY)
+            clss.fit(xtrain, ytrain)
 
             # construir la entrada dev
-            return [clss.predict(x) for x in devX]
+            return [clss.predict(x) for x in xdev]
         else:
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
@@ -786,7 +817,7 @@ class MyGrammar(GrammarGE):
             #hmm
             return None
 
-    def _class(self, i, input_shape, output_shape):
+    def _class(self, i, input_shape=None, output_shape=None):
         #LR | nb | SVM | dt | NN
         des = i.nextint(5)
         clss = None
@@ -946,14 +977,19 @@ class MyGrammar(GrammarGE):
         z = Dropout(dropout)(z)
         return z
 
-    def _repr(self, i, texts):
+    def _repr(self, i, dataset):
         # 'Prep Token SemFeat PosPrep MulWords Embed',
+        texts = dataset.texts
         texts = self._prep(i, texts)
         tokens = self._token(i, texts)
         tokens = self._semfeat(i, tokens)
         tokens = self._posprep(i, tokens)
         tokens = self._mulwords(i, tokens)
         vectors = self._embed(i, tokens)
+
+        dataset.vectors = vectors
+        dataset.tokens = tokens
+
         return vectors, tokens
 
     def _prep(self, i, texts):
@@ -1098,7 +1134,7 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
-    for i in range(20, 10000):
+    for i in range(1, 10000):
         random.seed(i)
         print("-------\nRandom seed %i" % i)
 

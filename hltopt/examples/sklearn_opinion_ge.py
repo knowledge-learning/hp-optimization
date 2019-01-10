@@ -15,8 +15,8 @@ from ..ge import GrammarGE, GE, Individual
 
 class MyGrammar(GrammarGE):
     def __init__(self, sentences, classes):
-        self.sentences = sentences#[:200]
-        self.classes = classes#[:200]
+        self.sentences = sentences[:200]
+        self.classes = classes[:200]
 
     def grammar(self):
         return {
@@ -80,7 +80,7 @@ class MyGrammar(GrammarGE):
         return GaussianNB()
 
     def _lr(self, i:Individual):
-        return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat(0.001, 10))
+        return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat(0.01, 10))
 
 
 def load_corpus():

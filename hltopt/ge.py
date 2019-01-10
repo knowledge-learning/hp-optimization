@@ -19,6 +19,21 @@ def make_rand_vector(dims):
     return [x/mag for x in vec]
 
 
+def make_rand_mutation(dims, alpha):
+    vec = [0] * dims
+    coords = int(alpha) * dims
+
+    if coords >= 1:
+        idx = random.sample(range(dims), coords)
+        for c in idx:
+            vec[c] = random.uniform(-0.5, 0.5)
+    else:
+        c = random.choice(range(dims))
+        vec[c] = random.uniform(-0.5,0.5) * alpha / dims
+
+    return vec
+
+
 class Individual:
     def __init__(self, values):
         self._values = [min(0.99999,max(0.00001,v)) for v in values]
