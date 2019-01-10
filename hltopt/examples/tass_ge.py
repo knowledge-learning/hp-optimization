@@ -54,6 +54,60 @@ class Token:
         return repr(self.__dict__)
 
 
+class Dataset:
+    def __init__(self):
+        self.texts = []
+        self.labels = []
+        self.relations = []
+
+    def load(self, path):
+        goldA = dataset_path / 'training' / 'gold' / ('output_A_' + file.name[6:])
+        goldB = dataset_path / 'training' / 'gold' / ('output_B_' + file.name[6:])
+        goldC = dataset_path / 'training' / 'gold' / ('output_C_' + file.name[6:])
+
+        text = file.open().read()
+        sentences = [s for s in text.split('\n') if s]
+
+        self.texts.extend(sentences)
+        self._parse_ann(sentences, goldA, goldB, goldC)
+
+    def _parse_ann(self, sentences, goldA, goldB, goldC):
+        sentences_length = [len(s) for s in sentences]
+
+        for i in range(1,len(sentences_length)):
+            sentences_length[i] += (sentences_length[i-1] + 1)
+
+        labelsA_doc = [{} for _ in sentences]
+        relations_doc = [[] for _ in sentences]
+        labelsB = {}
+        sent_map = {}
+
+        for line in goldB.open():
+            lid, lbl = line.split()
+            labelsB[int(lid)] = lbl
+
+        for line in goldA.open():
+            lid, start, end = (int(i) for i in line.split())
+
+            # find the sentence where this annotation is
+            i = bisect.bisect(sentences_length, start)
+            if i > 0:
+                start -= sentences_length[i-1] + 1
+                end -= sentences_length[i-1] + 1
+            labelsA_doc[i][(start,end)] = (lid, labelsB[lid])
+            sent_map[lid] = i
+
+        for line in goldC.open():
+            rel, org, dest = line.split()
+            org, dest = int(org), int(dest)
+            sent = sent_map[org]
+            assert sent == sent_map[dest]
+            relations_doc[sent].append((rel, org, dest))
+
+        self.labels.extend(labelsA_doc)
+        self.relations.extend(relations_doc)
+
+
 class MyGrammar(GrammarGE):
     def __init__(self):
         self.stemmer = SnowballStemmer("spanish")
@@ -139,15 +193,7 @@ class MyGrammar(GrammarGE):
 
         for file in (dataset_path / 'training' / 'input').iterdir():
             if file.name.endswith('.txt'):
-                goldA = dataset_path / 'training' / 'gold' / ('output_A_' + file.name[6:])
-                goldB = dataset_path / 'training' / 'gold' / ('output_B_' + file.name[6:])
-                goldC = dataset_path / 'training' / 'gold' / ('output_C_' + file.name[6:])
 
-                text = file.open().read()
-                sentences = [s for s in text.split('\n') if s]
-                texts.extend(sentences)
-
-                self._parse_ann(sentences, goldA, goldB, goldC, labels, relations)
 
                 if FAST:
                     break
@@ -173,42 +219,6 @@ class MyGrammar(GrammarGE):
             self._parse_ann(validation_sents, validation_A, validation_B, validation_C, labels, relations)
 
         return self._pipeline(ind, texts, validation_size, labels, relations)
-
-    def _parse_ann(self, sentences, goldA, goldB, goldC, labels, relations):
-        sentences_length = [len(s) for s in sentences]
-
-        for i in range(1,len(sentences_length)):
-            sentences_length[i] += (sentences_length[i-1] + 1)
-
-        labelsA_doc = [{} for _ in sentences]
-        relations_doc = [[] for _ in sentences]
-        labelsB = {}
-        sent_map = {}
-
-        for line in goldB.open():
-            lid, lbl = line.split()
-            labelsB[int(lid)] = lbl
-
-        for line in goldA.open():
-            lid, start, end = (int(i) for i in line.split())
-
-            # find the sentence where this annotation is
-            i = bisect.bisect(sentences_length, start)
-            if i > 0:
-                start -= sentences_length[i-1] + 1
-                end -= sentences_length[i-1] + 1
-            labelsA_doc[i][(start,end)] = (lid, labelsB[lid])
-            sent_map[lid] = i
-
-        for line in goldC.open():
-            rel, org, dest = line.split()
-            org, dest = int(org), int(dest)
-            sent = sent_map[org]
-            assert sent == sent_map[dest]
-            relations_doc[sent].append((rel, org, dest))
-
-        labels.extend(labelsA_doc)
-        relations.extend(relations_doc)
 
     def _pipeline(self, ind, texts, validation_size, labels, relations):
         # 'Pipeline' : 'Repr A B C | Repr AB C |  Repr A BC | Repr ABC',
@@ -276,7 +286,7 @@ class MyGrammar(GrammarGE):
             result_B = self._b(ind, trainX, trainY, dev)
 
             # Tarea C
-            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
+            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC)
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
             # Calcular fitness
@@ -322,7 +332,7 @@ class MyGrammar(GrammarGE):
             result_AB = self._ab(ind, train, labels_AB[:-validation_size], dev)
 
             # Tarea C
-            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC)
+            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC)
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
             # Calcular fitness
@@ -368,7 +378,7 @@ class MyGrammar(GrammarGE):
             result_A = self._a(ind, train, labels_A[:-validation_size], dev)
 
             # Tarea BC
-            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True)
+            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC, build_b=True)
             result_BC = self._bc(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
             # Calcular fitness
@@ -435,7 +445,7 @@ class MyGrammar(GrammarGE):
             # Ejecutar Tarea ABC junta
 
             # Tarea ABC
-            trainCx, trainCy, valCmapping = self._build_c_mapping(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
+            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
             result_ABC = self._abc(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
             # Calcular fitness
@@ -578,7 +588,7 @@ class MyGrammar(GrammarGE):
 
         return 2 * precision * recall / (precision + recall)
 
-    def _build_c_mapping(self, rep, tokens, labels, relations, mappingC, build_b=False, build_a=False):
+    def _build_c_mapping_pairs(self, rep, tokens, labels, relations, mappingC, build_b=False, build_a=False):
         # mapping de la tarea C (perdón)
         trainCx = []
         trainCy = []
