@@ -2,6 +2,7 @@
 
 import pprint
 import random
+import yaml
 
 from nltk.corpus import movie_reviews, stopwords
 from sklearn.decomposition import PCA, FastICA, TruncatedSVD
@@ -10,11 +11,13 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.svm import SVC
-from ..ge import GrammarGE, GE, Individual
+from ..ge import GrammarPGE, PGE, Individual
 
 
-class MyGrammar(GrammarGE):
+class MyGrammar(GrammarPGE):
     def __init__(self, sentences, classes):
+        super().__init__()
+
         self.sentences = sentences#[:200]
         self.classes = classes#[:200]
 
@@ -114,9 +117,12 @@ def main():
     print("Loading corpus")
     grammar = MyGrammar(*load_corpus())
 
-    print("Running heuristic")
-    ge = GE(grammar, popsize=10, selected=0.5, rate=0.975)
-    ge.run(100)
+    # print("Running heuristic")
+    # ge = GE(grammar, popsize=10, selected=0.5, rate=0.975)
+    # ge.run(100)
+
+    print(yaml.dump(grammar._grammar))
+    print(grammar.complexity())
 
 
 if __name__ == '__main__':
