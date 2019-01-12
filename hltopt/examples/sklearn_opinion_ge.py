@@ -11,10 +11,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.svm import SVC
-from ..ge import GrammarPGE, PGE, Individual, PIndividual
+from ..ge import Grammar, PGE, Individual
 
 
-class MyGrammar(GrammarPGE):
+class MyGrammar(Grammar):
     def __init__(self, sentences, classes):
         super().__init__()
 
@@ -35,9 +35,9 @@ class MyGrammar(GrammarPGE):
             'SVM'     : 'linear | rbf'
         }
 
-    def evaluate(self, i:PIndividual):
+    def evaluate(self, i:Individual):
         # preprocesamiento
-        if i.choose('none', 'stopW'):
+        if i.choose('none', 'stopW') == 'none':
             sw = None
         else:
             sw = stopwords.words('english')

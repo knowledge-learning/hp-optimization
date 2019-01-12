@@ -8,7 +8,7 @@ from .metaheuristic import Metaheuristic
 from .utils import InvalidPipeline
 
 
-class PIndividual:
+class Individual:
     """Representa un individuo de una gramática probabilística."""
     def __init__(self, values, grammar):
         self.values = values
@@ -61,7 +61,7 @@ class PIndividual:
         if isinstance(value, (int, float)):
             return value
         else:
-            rule, options, index = value
+            rule, _, _ = value
 
             rule_repr = []
 
@@ -118,7 +118,7 @@ class PGE(Metaheuristic):
             values = []
             for _ in range(self.indsize):
                 values.append(random.uniform(0,1))
-            population.append(PIndividual(values, self._grammar))
+            population.append(Individual(values, self._grammar))
 
         return population
 
@@ -165,7 +165,7 @@ class PGE(Metaheuristic):
             raise ValueError("Invalid type for a rule: %s" % str(rule))
 
 
-    def _evaluate(self, ind:PIndividual):
+    def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
 
         print(yaml.dump(ind.sample()))
@@ -206,7 +206,7 @@ class PGE(Metaheuristic):
 
 class GEEncoder(json.encoder.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, PIndividual):
+        if isinstance(obj, Individual):
             obj.reset()
             enc = obj.sample()
             obj.reset()
@@ -253,7 +253,7 @@ class Production:
     def clone(self):
         return Production(self.symbol, [r.clone() for r in self.rules])
 
-    def sample(self, ind:PIndividual):
+    def sample(self, ind:Individual):
         if len(self.rules) == 1:
             return self.rules[0], 1, 0
 
@@ -323,7 +323,7 @@ class IntProduction(Production):
     def complexity(self, grammar):
         return 1
 
-    def sample(self, ind:PIndividual):
+    def sample(self, ind:Individual):
         value = int(self.mean + self.dev * (ind.next() - 0.5) * 2)
         return max(self.min, min(self.max, value))
 
@@ -335,12 +335,12 @@ class FloatProduction(IntProduction):
     def __repr__(self):
         return "FloatProduction(%s,%f,%f,%f,%f)"  % (self.symbol, self.min, self.max, self.mean, self.dev)
 
-    def sample(self, ind:PIndividual):
+    def sample(self, ind:Individual):
         value = self.mean + self.dev * (ind.next() - 0.5) * 2
         return max(self.min, min(self.max, value))
 
 
-class GrammarPGE:
+class Grammar:
     def __init__(self):
         self._model = {}
 
@@ -388,7 +388,7 @@ class GrammarPGE:
     def __getitem__(self, key):
         return self._model[key]
 
-    def evaluate(self, ind:PIndividual) -> float:
+    def evaluate(self, ind:Individual) -> float:
         """Recibe un elemento de la gramática y devuelve un valor de fitness creciente."""
         raise NotImplementedError()
 
