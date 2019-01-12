@@ -11,7 +11,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.svm import SVC
-from ..ge import GrammarPGE, PGE, Individual
+from ..ge import GrammarPGE, PGE, Individual, PIndividual
 
 
 class MyGrammar(GrammarPGE):
@@ -37,14 +37,14 @@ class MyGrammar(GrammarPGE):
 
     def evaluate(self, i:Individual):
         # preprocesamiento
-        if i.nextbool():
+        if i.choose('none', 'stopW'):
             sw = None
         else:
             sw = stopwords.words('english')
 
         # vectorizador
         vect_cls = i.choose(TfidfVectorizer, CountVectorizer)
-        n_gram = i.nextint(1) + 1
+        n_gram = i.nextint()
         vect = vect_cls(stop_words=sw, ngram_range=(1,n_gram))
 
         # reductor
@@ -68,8 +68,6 @@ class MyGrammar(GrammarPGE):
             score += clas.score(X_test, y_test)
 
         score /= n
-        print(score)
-
         return score
 
     def _classifier(self, i:Individual):
@@ -83,7 +81,7 @@ class MyGrammar(GrammarPGE):
         return GaussianNB()
 
     def _lr(self, i:Individual):
-        return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat(0.001, 10))
+        return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat())
 
 
 def load_corpus():
@@ -117,12 +115,9 @@ def main():
     print("Loading corpus")
     grammar = MyGrammar(*load_corpus())
 
-    # print("Running heuristic")
-    # ge = GE(grammar, popsize=10, selected=0.5, rate=0.975)
-    # ge.run(100)
-
-    print(yaml.dump(grammar._grammar))
-    print(grammar.complexity())
+    print("Running heuristic")
+    ge = PGE(grammar, popsize=10, selected=0.5, learning=0.1)
+    ge.run(100)
 
 
 if __name__ == '__main__':

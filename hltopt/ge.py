@@ -62,6 +62,89 @@ class Individual:
         return "Individual({0})".format(self._values)
 
 
+class PIndividual:
+    """Representa un individuo de una gramática probabilística."""
+    def __init__(self, values, grammar):
+        self.values = values
+        self.current = 0
+        self.grammar = grammar
+        self.state = self._sample('Pipeline')
+
+    def reset(self):
+        self.current = 0
+        self.state = self._sample('Pipeline')
+
+    def choose(self, *values):
+        value = next(self.state)
+
+        if not isinstance(value, tuple):
+            raise ValueError('Cannot apply `choose` at this point (%s).' % str(value))
+
+        options, i = value
+
+        if options != len(values):
+            raise ValueError('Need to provide exactly %i values.' % options)
+
+        return values[i]
+
+    def next(self):
+        value = self.values[self.current]
+        self.current += 1
+        return value
+
+    def nextint(self):
+        value = next(self.state)
+
+        if not isinstance(value, int):
+            raise ValueError('Cannot apply `nextint` at this point (%s).' % str(value))
+
+        return value
+
+    def nextfloat(self):
+        value = next(self.state)
+
+        if not isinstance(value, float):
+            raise ValueError('Cannot apply `nextfloat` at this point (%s).' % str(value))
+
+        return value
+
+    def sample(self, symbol='Pipeline'):
+        production = self.grammar[symbol]
+        value = production.sample(self)
+
+        if isinstance(value, (int, float)):
+            return value
+        else:
+            rule, options, index = value
+
+            rule_repr = []
+
+            for s in rule.body:
+                if s[0].isupper():
+                    rule_repr.append({ s: self.sample(s) })
+                else:
+                    rule_repr.append(s)
+
+            return rule_repr
+
+    def _sample(self, symbol):
+        production = self.grammar[symbol]
+        value = production.sample(self)
+
+        if isinstance(value, (int, float)):
+            yield value
+        else:
+            rule, options, index = value
+
+            if options > 1:
+                yield options, index
+
+            for s in rule.body:
+                if s[0].isupper():
+                    yield from self._sample(s)
+
+
+
 class GE(Metaheuristic):
     def __init__(self, grammar, popsize=100, selected=0.1, rate=0.9):
         """Representa una metaheurística de Evolución Gramatical.
@@ -210,7 +293,7 @@ class PGE(Metaheuristic):
 
         self.selected = selected
 
-    def _init_population(self):
+    def _sample_population(self):
         """Construye la población inicial"""
         population = []
 
@@ -218,16 +301,7 @@ class PGE(Metaheuristic):
             values = []
             for _ in range(self.indsize):
                 values.append(random.uniform(0,1))
-            population.append(Individual(values))
-
-        list_distances = []
-        for a in population:
-            for b in population:
-                list_distances.append(self._grammar.distance(a,b))
-
-        # self.threshold = sorted(list_distances)[len(list_distances)//2]
-        self.threshold = max(list_distances) / 2
-        print("Initial threshold:", self.threshold)
+            population.append(PIndividual(values, self._grammar))
 
         return population
 
@@ -236,49 +310,17 @@ class PGE(Metaheuristic):
         sorted_pop = sorted(zip(pop,fit), key=lambda t: t[1], reverse=True)
         return [t[0] for t in sorted_pop[:self.selected]]
 
-    def _breed(self, pop):
-        """Construye una nueva población de tamaño {self.popsize} a partir de los individuos en pop."""
-        new_pop = []
+    def _update_model(self, best):
+        for ind in best:
+            ind.reset()
+            pipe = ind.sample()
 
-        while len(new_pop) < self.popsize:
-            parent = pop.pop(0)
-            new_pop.append(self._mutate(parent))
-            pop.append(parent)
+            print(pipe)
 
-        return new_pop
-
-    def _mutate(self, ind:Individual) -> Individual:
-        """Construye un nuevo individuo mutado a partir de `ind`."""
-
-        lmin = 0
-        lmax = 1
-        iters = 0
-
-        while True:
-            iters += 1
-            print('.', end='')
-
-            mutation = make_rand_vector(len(ind))
-            lmid = (lmin + lmax)/2
-            new_ind = Individual([v + lmid*x for v,x in zip(ind,mutation)])
-            dist = self._grammar.distance(ind, new_ind)
-
-            if iters > 100:
-                print('*')
-                return new_ind
-
-            if dist < self.threshold:
-                lmin = lmid
-            elif dist > 2 * self.threshold:
-                lmax = lmid
-            else:
-                print('x')
-                return new_ind
-
-    def _evaluate(self, ind:Individual):
+    def _evaluate(self, ind:PIndividual):
         """Computa el fitness de un individuo."""
 
-        print(yaml.dump(self._grammar.sample(ind)))
+        print(yaml.dump(ind.sample()))
 
         try:
             ind.reset()
@@ -292,14 +334,11 @@ class PGE(Metaheuristic):
     def run(self, evals:int):
         """Ejecuta la metaheurística hasta el número de evaluaciones indicado"""
 
-        self.it = 0
-        self.population = self._init_population()
-        self.fitness = [self._evaluate(i) for i in self.population]
+        it = 0
         self.current_best, self.current_fn = None, 0
 
-        while self.it < evals:
-            best_individuals = self._select(self.population, self.fitness)
-            self.population = self._breed(best_individuals)
+        while it < evals:
+            self.population = self._sample_population()
             self.fitness = [self._evaluate(i) for i in self.population]
 
             GEEncoder.grammar = self._grammar
@@ -311,9 +350,9 @@ class PGE(Metaheuristic):
                     self.current_fn = fn
                     print("Updated best: ", self.current_fn)
 
-            self.threshold *= self.rate
-            self.it += 1
-            print("Threshold:", self.threshold)
+            best = self._select(self.population, self.fitness)
+            self._update_model(best)
+            it += 1
 
         return self.current_best
 
@@ -327,6 +366,7 @@ class GEEncoder(json.encoder.JSONEncoder):
             enc = GEEncoder.grammar.sample(obj)
             obj.reset()
             return enc
+
 
 class GrammarGE:
     def evaluate(self, element) -> float:
@@ -520,90 +560,126 @@ class GrammarGE:
         }
 
 
+class Production:
+    def __init__(self, symbol, rules):
+        self.symbol = symbol
+        self.rules = rules
+
+    def __repr__(self):
+        return "Production(%s,%s)" % (self.symbol, repr(self.rules))
+
+    def normalize(self):
+        total = sum(r.prob for r in self.rules)
+        for r in self.rules:
+            r.prob /= total
+
+    def complexity(self, grammar):
+        if len(self.rules) == 1:
+            return self.rules[0].complexity(grammar)
+
+        return 1 + sum(r.complexity(grammar) for r in self.rules)
+
+    def sample(self, ind:PIndividual):
+        if len(self.rules) == 1:
+            return self.rules[0], 1, 0
+
+        value = ind.next()
+        p = 0
+
+        for i,r in enumerate(self.rules):
+            p += r.prob
+            if value <= p:
+                return r, len(self.rules), i
+
+        return self.rules[-1], len(self.rules), len(self.rules) - 1
+
+
+class Rule:
+    def __init__(self, body, prob:float):
+        self.body = body
+        self.prob = prob
+
+    def __repr__(self):
+        return "Rule(%s,%s)" % (repr(self.body), self.prob)
+
+    def complexity(self, grammar):
+        c = 0
+
+        for symbol in self.body:
+            if symbol[0].isupper():
+                c += grammar.complexity(symbol)
+
+        return c
+
+
+class IntProduction(Production):
+    def __init__(self, symbol, min:int, max:int):
+        self.symbol = symbol
+        self.min = min
+        self.max = max
+        self.mean = (max + min) / 2
+        self.dev = (max - min) / 2
+
+    def normalize(self):
+        pass
+
+    def complexity(self, grammar):
+        return 1
+
+    def sample(self, ind:PIndividual):
+        value = int(self.mean + self.dev * (ind.next() - 0.5) * 2)
+        return max(self.min, min(self.max, value))
+
+
+class FloatProduction(IntProduction):
+    def sample(self, ind:PIndividual):
+        value = self.mean + self.dev * (ind.next() - 0.5) * 2
+        return max(self.min, min(self.max, value))
+
+
 class GrammarPGE:
     def __init__(self):
-        self.probabilities = {}
         self._grammar = {}
 
         for symbol, productions in self.grammar().items():
             self._grammar[symbol] = []
             productions = productions.split('|')
+
+            if len(productions) == 1:
+                p = productions[0]
+
+                if p.startswith('f('):
+                    min, max = tuple(float(i) for i in p[2:-1].split(','))
+                    self._grammar[symbol] = FloatProduction(symbol, min, max)
+                    continue
+                if p.startswith('i('):
+                    min, max = tuple(int(i) for i in p[2:-1].split(','))
+                    self._grammar[symbol] = IntProduction(symbol, min, max)
+                    continue
+
+            rules = []
+
             for p in productions:
                 if p.startswith('f(') or p.startswith('i('):
-                    start, end = tuple(float(i) for i in p[2:-1].split(','))
-                    self.probabilities[(symbol, p)] = (start+end)/2, (end-start)/2
-                    self._grammar[symbol] = {p[0]: (start, end)}
-                else:
-                    self.probabilities[(symbol,p)] = 1.0 / len(productions)
-                    self._grammar[symbol].append(p.split())
+                    raise ValueError('Numeric rules must be the only ones.')
 
-    def evaluate(self, element) -> float:
+                rules.append(Rule(p.split(), 1))
+
+            production = Production(symbol, rules)
+            production.normalize()
+
+            self._grammar[symbol] = production
+
+    def __getitem__(self, key):
+        return self._grammar[key]
+
+    def evaluate(self, ind:PIndividual) -> float:
         """Recibe un elemento de la gramática y devuelve un valor de fitness creciente."""
-        pass
+        raise NotImplementedError()
 
     def grammar(self):
         raise NotImplementedError()
 
-    def complexity(self):
+    def complexity(self, symbol='Pipeline'):
         """Calcula la máxima complejidad de una solución en la gramática."""
-        return self._complexity('Pipeline')
-
-    def sample(self, ind:Individual):
-        return self._sample(ind, 'Pipeline', self.tree())
-
-    def _sample(self, ind:Individual, symbol, grammar):
-        if isinstance(symbol, dict):
-            symbol = list(symbol.keys())[0]
-
-        if symbol[0:2] == 'i(':
-            a,b = eval(symbol[1:])
-            return ind.nextint(b - a) + a
-
-        if symbol[0:2] == 'f(':
-            a,b = eval(symbol[1:])
-            return ind.nextfloat(a, b)
-
-        if symbol in ['yes', 'no']:
-            return symbol == 'yes'
-
-        if symbol[0].islower():
-            return symbol
-
-        productions = grammar[symbol]
-        n = len(productions)
-
-        if n == 1:
-            prod = productions[0]
-        else:
-            prod = productions[ind.nextint(n)]
-
-        values = {}
-
-        for i, s in enumerate(prod):
-            sname = s if isinstance(s, str) else list(s.keys())[0]
-            values[sname] = self._sample(ind, s, prod[i])
-
-        if len(values) == 1:
-            key = list(values.keys())[0]
-            if key[0].islower():
-                return values[key]
-
-        return values
-
-    def _complexity(self, symbol):
-        if isinstance(symbol, list):
-            return sum(self._complexity(s) for s in symbol)
-
-        if symbol[0].islower():
-            return 0
-
-        productions = self._grammar[symbol]
-
-        if isinstance(productions, list):
-            if len(productions) == 1:
-                return self._complexity(productions[0])
-
-            return 1 + sum(self._complexity(p) for p in productions)
-
-        if isinstance(productions, dict):
-            return 1
+        return self._grammar[symbol].complexity(self)
