@@ -132,3 +132,4 @@ PBIL.json
 run_experiment.py
 .vscode
 *.log
+*.json
