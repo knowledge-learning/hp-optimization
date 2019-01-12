@@ -46,3 +46,7 @@ def index(vector, count):
         value += newvector[i]*(1.0/l[i])
 
     return int(value * count)
+
+
+class InvalidPipeline(ValueError):
+    """Raise when a pipeline is not valid after construction."""
