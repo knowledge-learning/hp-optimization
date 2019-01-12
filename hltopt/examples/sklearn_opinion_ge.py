@@ -18,8 +18,8 @@ class MyGrammar(GrammarPGE):
     def __init__(self, sentences, classes):
         super().__init__()
 
-        self.sentences = sentences#[:200]
-        self.classes = classes#[:200]
+        self.sentences = sentences[:200]
+        self.classes = classes[:200]
 
     def grammar(self):
         return {
@@ -35,7 +35,7 @@ class MyGrammar(GrammarPGE):
             'SVM'     : 'linear | rbf'
         }
 
-    def evaluate(self, i:Individual):
+    def evaluate(self, i:PIndividual):
         # preprocesamiento
         if i.choose('none', 'stopW'):
             sw = None
@@ -61,13 +61,15 @@ class MyGrammar(GrammarPGE):
             X = X.toarray()
 
         score = 0
-        n = 3
+        n = 1
         for _ in range(n):
             X_train, X_test, y_train, y_test = train_test_split(X, self.classes, test_size=0.33)
             clas.fit(X_train, y_train)
             score += clas.score(X_test, y_test)
 
         score /= n
+        print(score)
+
         return score
 
     def _classifier(self, i:Individual):
@@ -116,7 +118,7 @@ def main():
     grammar = MyGrammar(*load_corpus())
 
     print("Running heuristic")
-    ge = PGE(grammar, popsize=10, selected=0.5, learning=0.1)
+    ge = PGE(grammar, popsize=100, selected=10, learning=0.25)
     ge.run(100)
 
 

@@ -311,11 +311,42 @@ class PGE(Metaheuristic):
         return [t[0] for t in sorted_pop[:self.selected]]
 
     def _update_model(self, best):
+        model = self._grammar.get_model()
+
         for ind in best:
             ind.reset()
             pipe = ind.sample()
 
-            print(pipe)
+            self._update_ind_model(model, 'Pipeline', pipe)
+
+        for s, p in model.items():
+            p.normalize()
+
+        self._grammar.merge(model, self.learning)
+        print(yaml.dump(self._grammar._model))
+
+    def _update_ind_model(self, model, symbol, rule):
+        if isinstance(rule, list):
+            body = []
+            for s in rule:
+                if isinstance(s, dict):
+                    key = list(s.keys())[0]
+                    body.append(key)
+
+                    self._update_ind_model(model, key, s[key])
+
+                elif isinstance(s, str):
+                    body.append(s)
+                else:
+                    raise ValueError("Invalid type for a rule element: %s" % str(s))
+            model[symbol].update(body)
+
+        elif isinstance(rule, (int, float)):
+            model[symbol].update(rule)
+
+        else:
+            raise ValueError("Invalid type for a rule: %s" % str(rule))
+
 
     def _evaluate(self, ind:PIndividual):
         """Computa el fitness de un individuo."""
@@ -341,14 +372,13 @@ class PGE(Metaheuristic):
             self.population = self._sample_population()
             self.fitness = [self._evaluate(i) for i in self.population]
 
-            GEEncoder.grammar = self._grammar
-            self.save(GEEncoder)
-
             for ind, fn in zip(self.population, self.fitness):
                 if fn > self.current_fn:
                     self.current_best = ind
                     self.current_fn = fn
                     print("Updated best: ", self.current_fn)
+
+            self.save(GEEncoder)
 
             best = self._select(self.population, self.fitness)
             self._update_model(best)
@@ -358,12 +388,10 @@ class PGE(Metaheuristic):
 
 
 class GEEncoder(json.encoder.JSONEncoder):
-    grammar = None
-
     def default(self, obj):
         if isinstance(obj, Individual):
             obj.reset()
-            enc = GEEncoder.grammar.sample(obj)
+            enc = obj.sample()
             obj.reset()
             return enc
 
@@ -568,16 +596,37 @@ class Production:
     def __repr__(self):
         return "Production(%s,%s)" % (self.symbol, repr(self.rules))
 
+    def merge(self, prod, learning):
+        for r1,r2 in zip(prod.rules, self.rules):
+            r2.merge(r1, learning)
+
+        self.normalize()
+
+    def update(self, body):
+        for r in self.rules:
+            if r.body == body:
+                r.prob += 1
+                return
+
+        raise ValueError("Invalid body: %s" % body)
+
     def normalize(self):
         total = sum(r.prob for r in self.rules)
+
         for r in self.rules:
-            r.prob /= total
+            if total == 0:
+                r.prob = 1.0 / len(self.rules)
+            else:
+                r.prob /= total
 
     def complexity(self, grammar):
         if len(self.rules) == 1:
             return self.rules[0].complexity(grammar)
 
         return 1 + sum(r.complexity(grammar) for r in self.rules)
+
+    def clone(self):
+        return Production(self.symbol, [r.clone() for r in self.rules])
 
     def sample(self, ind:PIndividual):
         if len(self.rules) == 1:
@@ -602,6 +651,12 @@ class Rule:
     def __repr__(self):
         return "Rule(%s,%s)" % (repr(self.body), self.prob)
 
+    def merge(self, other, learning):
+        self.prob = learning * other.prob + (1-learning) * self.prob
+
+    def clone(self):
+        return Rule(self.body, 0)
+
     def complexity(self, grammar):
         c = 0
 
@@ -619,9 +674,26 @@ class IntProduction(Production):
         self.max = max
         self.mean = (max + min) / 2
         self.dev = (max - min) / 2
+        self.values = []
+
+    def merge(self, other, learning):
+        self.mean = learning * other.mean + (1-learning) * self.mean
+        self.dev = learning * other.dev + (1-learning) * self.dev
+
+    def __repr__(self):
+        return "IntProduction(%s,%i,%i,%f,%f)"  % (self.symbol, self.min, self.max, self.mean, self.dev)
+
+    def update(self, value):
+        self.values.append(value)
+
+    def clone(self):
+        return IntProduction(self.symbol, self.min, self.max)
 
     def normalize(self):
-        pass
+        if self.values:
+            self.mean = sum(self.values) / len(self.values)
+            self.dev = (max(self.values) - min(self.values)) / 2
+            self.values.clear()
 
     def complexity(self, grammar):
         return 1
@@ -632,6 +704,12 @@ class IntProduction(Production):
 
 
 class FloatProduction(IntProduction):
+    def clone(self):
+        return FloatProduction(self.symbol, self.min, self.max)
+
+    def __repr__(self):
+        return "FloatProduction(%s,%f,%f,%f,%f)"  % (self.symbol, self.min, self.max, self.mean, self.dev)
+
     def sample(self, ind:PIndividual):
         value = self.mean + self.dev * (ind.next() - 0.5) * 2
         return max(self.min, min(self.max, value))
@@ -639,10 +717,10 @@ class FloatProduction(IntProduction):
 
 class GrammarPGE:
     def __init__(self):
-        self._grammar = {}
+        self._model = {}
 
         for symbol, productions in self.grammar().items():
-            self._grammar[symbol] = []
+            self._model[symbol] = []
             productions = productions.split('|')
 
             if len(productions) == 1:
@@ -650,11 +728,11 @@ class GrammarPGE:
 
                 if p.startswith('f('):
                     min, max = tuple(float(i) for i in p[2:-1].split(','))
-                    self._grammar[symbol] = FloatProduction(symbol, min, max)
+                    self._model[symbol] = FloatProduction(symbol, min, max)
                     continue
                 if p.startswith('i('):
                     min, max = tuple(int(i) for i in p[2:-1].split(','))
-                    self._grammar[symbol] = IntProduction(symbol, min, max)
+                    self._model[symbol] = IntProduction(symbol, min, max)
                     continue
 
             rules = []
@@ -668,10 +746,22 @@ class GrammarPGE:
             production = Production(symbol, rules)
             production.normalize()
 
-            self._grammar[symbol] = production
+            self._model[symbol] = production
+
+    def get_model(self):
+        model = {}
+
+        for symbol, prod in self._model.items():
+            model[symbol] = prod.clone()
+
+        return model
+
+    def merge(self, model, learning):
+        for symb, prod in model.items():
+            self._model[symb].merge(prod, learning)
 
     def __getitem__(self, key):
-        return self._grammar[key]
+        return self._model[key]
 
     def evaluate(self, ind:PIndividual) -> float:
         """Recibe un elemento de la gramática y devuelve un valor de fitness creciente."""
@@ -682,4 +772,4 @@ class GrammarPGE:
 
     def complexity(self, symbol='Pipeline'):
         """Calcula la máxima complejidad de una solución en la gramática."""
-        return self._grammar[symbol].complexity(self)
+        return self._model[symbol].complexity(self)
