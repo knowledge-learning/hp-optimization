@@ -33,7 +33,7 @@ from nltk.corpus import stopwords
 from keras.models import Sequential, Model
 from keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
 
-from ..ge import GrammarGE, GE, Individual, InvalidPipeline
+from ..ge import Grammar, PGE, Individual, InvalidPipeline
 
 
 class Token:
@@ -54,8 +54,10 @@ class Token:
         return repr(self.__dict__)
 
 
-class MyGrammar(GrammarGE):
+class MyGrammar(Grammar):
     def __init__(self):
+        super().__init__()
+
         self.stemmer = SnowballStemmer("spanish")
         self.spacy_nlp = spacy.load('es')
 
@@ -1093,8 +1095,8 @@ def main():
         print("-------\nRandom seed %i" % i)
 
         try:
-            ind = Individual([random.uniform(0,1) for _ in range(100)])
-            print(yaml.dump(grammar.sample(ind)))
+            ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
+            print(yaml.dump(ind.sample()))
             ind.reset()
             print(grammar.evaluate(ind))
         except InvalidPipeline as e:

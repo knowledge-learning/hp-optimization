@@ -3,7 +3,9 @@
 import yaml
 import random
 import json
+import multiprocessing
 
+from queue import Empty
 from .metaheuristic import Metaheuristic
 from .utils import InvalidPipeline
 
@@ -91,7 +93,7 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.9):
+    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.9, timeout=None):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -100,6 +102,7 @@ class PGE(Metaheuristic):
         """
         super().__init__()
 
+        self.timeout = timeout
         self._grammar = grammar
         self.popsize = popsize
         self.indsize = self._grammar.complexity()
@@ -140,7 +143,7 @@ class PGE(Metaheuristic):
             p.normalize()
 
         self._grammar.merge(model, self.learning)
-        print(yaml.dump(self._grammar._model))
+        # print(yaml.dump(self._grammar._model))
 
     def _update_ind_model(self, model, symbol, rule):
         if isinstance(rule, list):
@@ -164,19 +167,31 @@ class PGE(Metaheuristic):
         else:
             raise ValueError("Invalid type for a rule: %s" % str(rule))
 
+    def _evaluate_one(self, ind, q):
+        try:
+            f = self._grammar.evaluate(ind)
+            q.put(f)
+        except InvalidPipeline as e:
+            print("!", str(e))
+            q.put(0)
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
-
+        print("\nPipeline:")
         print(yaml.dump(ind.sample()))
+        ind.reset()
+
+        q = multiprocessing.Queue()
+        p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q))
+        p.start()
 
         try:
-            ind.reset()
-            f = self._grammar.evaluate(ind)
-        except InvalidPipeline as e:
-            print(str(e))
+            f = q.get(block=True, timeout=self.timeout)
+        except Empty:
+            print("! Timeout")
             f = 0
 
+        print("Fitness: %.3f" % f)
         return f
 
     def run(self, evals:int):
