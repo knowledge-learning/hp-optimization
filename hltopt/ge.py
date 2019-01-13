@@ -143,7 +143,7 @@ class PGE(Metaheuristic):
             ind.reset()
             pipe = ind.sample()
 
-            self._update_ind_model(model, 'Pipeline', pipe)
+            self._update_ind_model(model, 'Pipeline', pipe['Pipeline'])
 
         for s, p in model.items():
             p.normalize()
@@ -183,10 +183,6 @@ class PGE(Metaheuristic):
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
-        print("\nPipeline:")
-        print(yaml.dump(ind.sample()))
-        ind.reset()
-
         q = multiprocessing.Queue()
         p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q))
         p.start()
@@ -198,6 +194,8 @@ class PGE(Metaheuristic):
             f = 0
 
         print("Fitness: %.3f" % f)
+        ind.reset()
+        print(yaml.dump(ind.sample()))
         return f
 
     def run(self, evals:int):
