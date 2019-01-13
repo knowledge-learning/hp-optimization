@@ -768,6 +768,8 @@ class MyGrammar(Grammar):
 
     def _crf(self, ind:Individual, trainX, trainY, devX):
         crf = CRF()
+        crf.fit(trainX, trainY)
+        return [crf.predict(x) for x in devX]
 
     def _b(self, ind:Individual, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
