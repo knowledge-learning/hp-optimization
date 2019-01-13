@@ -16,11 +16,11 @@ class Individual:
         self.values = values
         self.current = 0
         self.grammar = grammar
-        self.state = self._sample('Pipeline')
+        self.state = self._walk('Pipeline')
 
     def reset(self):
         self.current = 0
-        self.state = self._sample('Pipeline')
+        self.state = self._walk('Pipeline')
 
     def choose(self, *values):
         value = next(self.state)
@@ -56,7 +56,13 @@ class Individual:
 
         return value
 
-    def sample(self, symbol='Pipeline'):
+    def nextbool(self):
+        return self.choose('yes', 'no') == 'yes'
+
+    def sample(self):
+        return {'Pipeline': self._sample('Pipeline')}
+
+    def _sample(self, symbol):
         production = self.grammar[symbol]
         value = production.sample(self)
 
@@ -69,13 +75,13 @@ class Individual:
 
             for s in rule.body:
                 if s[0].isupper():
-                    rule_repr.append({ s: self.sample(s) })
+                    rule_repr.append({ s: self._sample(s) })
                 else:
                     rule_repr.append(s)
 
             return rule_repr
 
-    def _sample(self, symbol):
+    def _walk(self, symbol):
         production = self.grammar[symbol]
         value = production.sample(self)
 
@@ -89,7 +95,7 @@ class Individual:
 
             for s in rule.body:
                 if s[0].isupper():
-                    yield from self._sample(s)
+                    yield from self._walk(s)
 
 
 class PGE(Metaheuristic):
