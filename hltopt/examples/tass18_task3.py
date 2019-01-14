@@ -57,7 +57,6 @@ class Token:
         return repr(self.__dict__)
 
 
-<<<<<<< HEAD:hltopt/examples/tass_ge.py
 def cached(func):
     result = None
     @functools.wraps(func)
@@ -160,9 +159,6 @@ class Dataset:
 
 
 class MyGrammar(GrammarGE):
-=======
-class MyGrammar(Grammar):
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
     def __init__(self):
         super().__init__()
 
@@ -244,7 +240,6 @@ class MyGrammar(Grammar):
         }
 
     def evaluate(self, ind:Individual):
-<<<<<<< HEAD:hltopt/examples/tass_ge.py
         FAST = True
         TEST = False
 
@@ -255,35 +250,11 @@ class MyGrammar(Grammar):
         for file in (dataset_path / 'training').iterdir():
             if file.name.startswith('input'):
                 dataset.load(file)
-=======
-        # FAST = True
-        FAST = False
-
-        # load training data
-        dataset_path = Path.cwd() / 'hltopt' / 'datasets' / 'tass18_task3'
-
-        texts = []
-        labels = []
-        relations = []
-
-        for file in (dataset_path / 'training').iterdir():
-            if file.name.startswith('input'):
-                goldA = dataset_path / 'training' / ('output_A_' + file.name[6:])
-                goldB = dataset_path / 'training' / ('output_B_' + file.name[6:])
-                goldC = dataset_path / 'training' / ('output_C_' + file.name[6:])
-
-                text = file.open().read()
-                sentences = [s for s in text.split('\n') if s]
-                texts.extend(sentences)
-
-                self._parse_ann(sentences, goldA, goldB, goldC, labels, relations)
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
 
                 if FAST:
                     break
 
         if FAST:
-<<<<<<< HEAD:hltopt/examples/tass_ge.py
             dataset.validation_size = 10
         else:
             validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
@@ -292,19 +263,6 @@ class MyGrammar(Grammar):
             if TEST:
                 test = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
                 dataset.validation_size = dataset.load(test)
-=======
-            validation_size = int(0.2 * len(texts))
-        else:
-            validation = dataset_path / 'develop'/ 'input_develop.txt'
-            validation_A = dataset_path / 'develop' / 'output_A_develop.txt'
-            validation_B = dataset_path / 'develop' / 'output_B_develop.txt'
-            validation_C = dataset_path / 'develop' / 'output_C_develop.txt'
-
-            # validation = dataset_path / 'test'/ 'scenario1-ABC' / 'input_scenario1.txt'
-            # validation_A = dataset_path / 'test' / 'scenario1-ABC' / 'output_A_scenario1.txt'
-            # validation_B = dataset_path / 'test' / 'scenario1-ABC' / 'output_B_scenario1.txt'
-            # validation_C = dataset_path / 'test' / 'scenario1-ABC' / 'output_C_scenario1.txt'
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
 
         return self._pipeline(ind, dataset)
 
@@ -796,15 +754,8 @@ class MyGrammar(Grammar):
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
 
-<<<<<<< HEAD:hltopt/examples/tass_ge.py
     def _a(self, i, dataset:Dataset):
-        choice = i.nextint(2)
-=======
-    def _a(self, ind:Individual, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
-
         choice = ind.choose('class', 'seq')
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
 
         if choice == 'class':
             # classifier
@@ -906,11 +857,7 @@ class MyGrammar(Grammar):
             #hmm
             return None
 
-<<<<<<< HEAD:hltopt/examples/tass_ge.py
-    def _class(self, i, input_shape=None, output_shape=None):
-=======
-    def _class(self, ind:Individual, input_shape, output_shape):
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
+    def _class(self, ind:Individual, input_shape=None, output_shape=None):
         #LR | nb | SVM | dt | NN
         des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
         clss = None
@@ -1228,11 +1175,7 @@ class MyGrammar(Grammar):
 def main():
     grammar = MyGrammar()
 
-<<<<<<< HEAD:hltopt/examples/tass_ge.py
-    for i in range(1, 10000):
-=======
     for i in range(0, 100000):
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
         random.seed(i)
         print("-------\nRandom seed %i" % i)
 

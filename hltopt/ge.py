@@ -99,7 +99,7 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.9, timeout=None):
+    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población

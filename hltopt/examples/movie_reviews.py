@@ -16,13 +16,10 @@ from ..ge import Grammar, PGE, Individual
 
 class MyGrammar(Grammar):
     def __init__(self, sentences, classes):
-<<<<<<< HEAD:hltopt/examples/sklearn_opinion_ge.py
-=======
         super().__init__()
 
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/movie_reviews.py
-        self.sentences = sentences[:200]
-        self.classes = classes[:200]
+        self.sentences = sentences#[:200]
+        self.classes = classes#[:200]
 
     def grammar(self):
         return {
@@ -71,7 +68,6 @@ class MyGrammar(Grammar):
             score += clas.score(X_test, y_test)
 
         score /= n
-        print(score)
 
         return score
 
@@ -86,11 +82,7 @@ class MyGrammar(Grammar):
         return GaussianNB()
 
     def _lr(self, i:Individual):
-<<<<<<< HEAD:hltopt/examples/sklearn_opinion_ge.py
-        return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat(0.01, 10))
-=======
         return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat())
->>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/movie_reviews.py
 
 
 def load_corpus():
