@@ -50,3 +50,12 @@ def index(vector, count):
 
 class InvalidPipeline(ValueError):
     """Raise when a pipeline is not valid after construction."""
+
+
+def szip(*items):
+    sizes = set(len(i) for i in items)
+
+    if len(sizes) != 1:
+        raise ValueError("All collections should be the same size.")
+
+    return zip(*items)

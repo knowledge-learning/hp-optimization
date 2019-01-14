@@ -37,6 +37,9 @@ from keras.models import Sequential, Model
 from keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
 
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
+from ..datasets.ehealthkd import TassDataset
+
+from ..utils import szip
 
 
 class Token:
@@ -55,129 +58,6 @@ class Token:
 
     def __repr__(self):
         return repr(self.__dict__)
-
-
-def cached(func):
-    result = None
-    @functools.wraps(func)
-    def f(*args, **kwargs):
-        nonlocal result
-        if result is None:
-            result = func(*args, **kwargs)
-        return result
-    return f
-
-
-class Dataset:
-    def __init__(self):
-        self.texts = []
-        self.labels = []
-        self.relations = []
-        self.validation_size = 0
-        self.vectors = None
-        self.tokens = None
-
-    def load(self, finput:Path):
-        goldA = finput.parent / ('output_A_' + finput.name[6:])
-        goldB = finput.parent / ('output_B_' + finput.name[6:])
-        goldC = finput.parent / ('output_C_' + finput.name[6:])
-
-        text = finput.open().read()
-        sentences = [s for s in text.split('\n') if s]
-
-        self.texts.extend(sentences)
-        self._parse_ann(sentences, goldA, goldB, goldC)
-
-        return len(sentences)
-
-    def _parse_ann(self, sentences, goldA, goldB, goldC):
-        sentences_length = [len(s) for s in sentences]
-
-        for i in range(1,len(sentences_length)):
-            sentences_length[i] += (sentences_length[i-1] + 1)
-
-        labelsA_doc = [{} for _ in sentences]
-        relations_doc = [[] for _ in sentences]
-        labelsB = {}
-        sent_map = {}
-
-        for line in goldB.open():
-            lid, lbl = line.split()
-            labelsB[int(lid)] = lbl
-
-        for line in goldA.open():
-            lid, start, end = (int(i) for i in line.split())
-
-            # find the sentence where this annotation is
-            i = bisect.bisect(sentences_length, start)
-            if i > 0:
-                start -= sentences_length[i-1] + 1
-                end -= sentences_length[i-1] + 1
-            labelsA_doc[i][(start,end)] = (lid, labelsB[lid])
-            sent_map[lid] = i
-
-        for line in goldC.open():
-            rel, org, dest = line.split()
-            org, dest = int(org), int(dest)
-            sent = sent_map[org]
-            assert sent == sent_map[dest]
-            relations_doc[sent].append((rel, org, dest))
-
-        self.labels.extend(labelsA_doc)
-        self.relations.extend(relations_doc)
-
-    def _check_repr(self):
-        if self.vectors is None or self.tokens is None:
-            raise ValueError("Preprocesing and representation is not ready yet.")
-
-    @cached
-    def _labels_map(self):
-        labels_map = []
-
-        for sent, lbls in zip(self.tokens, self.labels):
-            sent_map = []
-            for t in sent:
-                if (t.init, t.end) in lbls:
-                    lbl = lbls[(t.init, t.end)][1]
-                    sent_map.append(lbl)
-                else:
-                    sent_map.append('')
-
-            labels_map.append(sent_map)
-
-        return labels_map
-
-    def task_a_by_word(self):
-        self._check_repr()
-
-        labels_map = self._labels_map()
-        xtrain = self.vectors[:-self.validation_size]
-        ytrain = [np.asarray([1 if l else 0 for l in sent]) for sent in labels_map[:-self.validation_size]]
-        xdev = self.vectors[-self.validation_size:]
-
-        return xtrain, ytrain, xdev
-
-    def task_b_by_word(self, result_A):
-        self._check_repr()
-
-        xtrain = []
-        ytrain = []
-
-        for sentence, labels in zip(self.vectors, self._labels_map()):
-            new_sent = []
-            new_lbl = []
-            for word, lbl in zip(sentence, labels):
-                if lbl:
-                    new_sent.append(word)
-                    new_lbl.append(lbl)
-            if new_sent:
-                new_sent = np.vstack(new_sent)
-                new_lbl = np.hstack(new_lbl)
-
-            xtrain.append(new_sent)
-            ytrain.append(new_lbl)
-
-        xdev = []
 
 
 class TassGrammar(Grammar):
@@ -240,6 +120,7 @@ class TassGrammar(Grammar):
             # Final layer
             'FLayer'   : 'sigmoid | softmax',
 
+            # Text representation
             'Repr'     : 'Token Prep SemFeat PosPrep MulWords Embed',
             'Token'    : 'wordTok',
             'Prep'     : 'DelPunt StripAcc',
@@ -256,9 +137,6 @@ class TassGrammar(Grammar):
             'MulWords' : 'countPhrase | freeling | Ngram',
             'Ngram'    : 'i(2,4)',
             'Embed'    : 'wordVec | onehot | none',
-            # 'WordVec'  : 'yes | no',
-            # 'SenseVec' : 'yes | no',
-            # 'CharEmbed': 'yes | no',
         }
 
     def evaluate(self, ind:Individual):
@@ -267,23 +145,23 @@ class TassGrammar(Grammar):
 
         # load training data
         dataset_path = Path.cwd() / 'hltopt' / 'examples' / 'datasets' / 'tass18_task3'
-        dataset = Dataset()
+        dataset = TassDataset()
 
         for file in (dataset_path / 'training').iterdir():
             if file.name.startswith('input'):
                 dataset.load(file)
 
-                if FAST:
+                if FAST and len(dataset.texts) >= 100:
                     break
 
         if FAST:
-            dataset.validation_size = 10
+            dataset.validation_size = int(0.2 * len(dataset.texts))
         else:
-            validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
+            validation = dataset_path / 'develop' / 'input_develop.txt'
             dataset.validation_size = dataset.load(validation)
 
             if TEST:
-                test = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
+                test = dataset_path / 'test' / 'input_scenario1.txt'
                 dataset.validation_size = dataset.load(test)
 
         return self._pipeline(ind, dataset)
@@ -304,31 +182,6 @@ class TassGrammar(Grammar):
         # ]
         self._repr(ind, dataset)
 
-        # mapping de la tarea A, B
-        # labels_map = []
-
-        # for sent, lbls in zip(tokens, labels):
-        #     sent_map = []
-        #     for t in sent:
-        #         if (t.init, t.end) in lbls:
-        #             lbl = lbls[(t.init, t.end)][1]
-        #             sent_map.append(lbl)
-        #         else:
-        #             sent_map.append('')
-
-        #     labels_map.append(sent_map)
-
-        # # mapping de la tarea C
-        # mappingC = DictVectorizer()
-        # mappingC.fit([{k:True for k in [
-        #     'is-a',
-        #     'part-of',
-        #     'property-of',
-        #     'same-as',
-        #     'subject',
-        #     'target',
-        # ]}])
-
         if choice == 'A B C':
             # Ejecutar tareas A, B y C en secuencia
 
@@ -336,9 +189,11 @@ class TassGrammar(Grammar):
             result_A = self._a(ind, dataset)
 
             # Tarea B
-            result_B = self._b(ind, dataset, result_A)
+            val_labels = self._b(ind, dataset, result_A)
 
             # Tarea C
+            val_relations = self._c(ind, dataset, result_A, val_labels)
+
             trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC)
             result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
 
@@ -346,9 +201,9 @@ class TassGrammar(Grammar):
             # Labels
             ids = 0
             val_labels = []
-            for sent, resA, resB in zip(tokens[-validation_size:], result_A, result_B):
+            for sent, resA, resB in szip(tokens[-validation_size:], result_A, result_B):
                 sentence_labels = {}
-                for tok, clsA, clsB in zip(sent, resA, resB):
+                for tok, clsA, clsB in szip(sent, resA, resB):
                     if clsA == 1:
                         sentence_labels[(tok.init, tok.end)] = (ids, clsB)
                         ids += 1
@@ -356,9 +211,9 @@ class TassGrammar(Grammar):
 
             # relations
             val_relations = []
-            for lbl, resC, mapC in zip(val_labels, result_C, valCmapping[-validation_size:]):
+            for lbl, resC, mapC in szip(val_labels, result_C, valCmapping[-validation_size:]):
                 sentence_rels = []
-                for rels, (org, dest) in zip(resC, mapC):
+                for rels, (org, dest) in szip(resC, mapC):
                     if org not in lbl or dest not in lbl:
                         continue
                     orgid, orglb = lbl[org]
@@ -392,9 +247,9 @@ class TassGrammar(Grammar):
             # Labels
             ids = 0
             val_labels = []
-            for sent, resAB in zip(tokens[-validation_size:], result_AB):
+            for sent, resAB in szip(tokens[-validation_size:], result_AB):
                 sentence_labels = {}
-                for tok, clsAB in zip(sent, resAB):
+                for tok, clsAB in szip(sent, resAB):
                     if clsAB:
                         sentence_labels[(tok.init, tok.end)] = (ids, clsAB)
                         ids += 1
@@ -402,9 +257,9 @@ class TassGrammar(Grammar):
 
             # relations
             val_relations = []
-            for lbl, resC, mapC in zip(val_labels, result_C, valCmapping[-validation_size:]):
+            for lbl, resC, mapC in szip(val_labels, result_C, valCmapping[-validation_size:]):
                 sentence_rels = []
-                for rels, (org, dest) in zip(resC, mapC):
+                for rels, (org, dest) in szip(resC, mapC):
                     if org not in lbl or dest not in lbl:
                         continue
                     orgid, orglb = lbl[org]
@@ -438,9 +293,9 @@ class TassGrammar(Grammar):
             # Labels
             ids = 0
             val_labels = []
-            for sent, resA, resB in zip(tokens[-validation_size:], result_A, result_BC):
+            for sent, resA, resB in szip(tokens[-validation_size:], result_A, result_BC):
                 sentence_labels = {}
-                for tok, clsA in zip(sent, resA):
+                for tok, clsA in szip(sent, resA):
                     if clsA == 1:
                         sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
                         ids += 1
@@ -454,8 +309,8 @@ class TassGrammar(Grammar):
                 (0,1):  'Action'
             }
 
-            for lbl, resC, mapC in zip(val_labels, result_BC, valCmapping[-validation_size:]):
-                for rels, (org, dest) in zip(resC, mapC):
+            for lbl, resC, mapC in szip(val_labels, result_BC, valCmapping[-validation_size:]):
+                for rels, (org, dest) in szip(resC, mapC):
                     if org not in lbl or dest not in lbl:
                         continue
                     orgid, orglbs = lbl[org]
@@ -473,9 +328,9 @@ class TassGrammar(Grammar):
 
             # # compute relations
             val_relations = []
-            for lbl, resC, mapC in zip(val_labels, result_BC, valCmapping[-validation_size:]):
+            for lbl, resC, mapC in szip(val_labels, result_BC, valCmapping[-validation_size:]):
                 sentence_rels = []
-                for rels, (org, dest) in zip(resC, mapC):
+                for rels, (org, dest) in szip(resC, mapC):
                     if org not in lbl or dest not in lbl:
                         continue
                     orgid, orglb = lbl[org]
@@ -530,8 +385,8 @@ class TassGrammar(Grammar):
                 (1,1): 'None'
             }
 
-            for lbl, resC, mapC in zip(val_labels, result_ABC, valCmapping[-validation_size:]):
-                for rels, (org, dest) in zip(resC, mapC):
+            for lbl, resC, mapC in szip(val_labels, result_ABC, valCmapping[-validation_size:]):
+                for rels, (org, dest) in szip(resC, mapC):
                     if org not in lbl or dest not in lbl:
                         continue
                     orgid, orglbs = lbl[org]
@@ -548,9 +403,9 @@ class TassGrammar(Grammar):
 
             # # compute relations
             val_relations = []
-            for lbl, resC, mapC in zip(val_labels, result_ABC, valCmapping[-validation_size:]):
+            for lbl, resC, mapC in szip(val_labels, result_ABC, valCmapping[-validation_size:]):
                 sentence_rels = []
-                for rels, (org, dest) in zip(resC, mapC):
+                for rels, (org, dest) in szip(resC, mapC):
                     if org not in lbl or dest not in lbl:
                         continue
                     orgid, orglb = lbl[org]
@@ -590,7 +445,7 @@ class TassGrammar(Grammar):
         t2v = {}
         v2t = {}
 
-        for l1, l2 in zip(train_labels, val_labels):
+        for l1, l2 in szip(train_labels, val_labels):
             for start, end in l1:
                 if (start, end) in l2:
                     t2v[l1[(start, end)][0]] = l2[(start,end)][0]
@@ -608,7 +463,7 @@ class TassGrammar(Grammar):
                 if not (start, end) in l1:
                     spuriousA += 1
 
-        for r1, r2 in zip(train_relations, val_relations):
+        for r1, r2 in szip(train_relations, val_relations):
             for r,to,td in r1:
                 if not to in t2v or not td in t2v:
                     missingC += 1
@@ -622,7 +477,7 @@ class TassGrammar(Grammar):
                 else:
                     missingC += 1
 
-        for r1, r2 in zip(train_relations, val_relations):
+        for r1, r2 in szip(train_relations, val_relations):
             for r,vo,vd in r2:
                 if not vo in v2t or not vd in v2t:
                     spuriousC += 1
@@ -653,7 +508,7 @@ class TassGrammar(Grammar):
             None: [0,0]
         }
 
-        for feats, sent, lbls, rels in zip(rep, tokens, labels, relations):
+        for feats, sent, lbls, rels in szip(rep, tokens, labels, relations):
             rel_pairs = []
             rel_map = []
             rel_clss = []
@@ -767,14 +622,14 @@ class TassGrammar(Grammar):
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
 
-    def _a(self, ind:Individual, dataset:Dataset):
+    def _a(self, ind:Individual, dataset:TassDataset):
         choice = ind.choose('class', 'seq')
 
         if choice == 'class':
             # classifier
 
             # calcular la forma de la entrada
-            rows, cols = dataset.vectors[0].shape
+            _, cols = dataset.vectors[0].shape
             intput_shape = cols
 
             clss = self._class(ind, intput_shape, 1)
@@ -789,30 +644,40 @@ class TassGrammar(Grammar):
             clss.fit(xtrain, ytrain)
 
             # construir la entrada dev
-            return [clss.predict(x) for x in xdev]
+            prediction = [clss.predict(x) for x in xdev]
         else:
             # sequence classifier
             # alg = ind.choose('hmm', 'crf')
 
             xtrain, ytrain, xdev = dataset.task_a_by_word()
-            return self._hmm(ind, xtrain, ytrain, xdev)
+            prediction = self._hmm(ind, xtrain, ytrain, xdev)
 
             # if alg == 'hmm':
             # else:
             #     raise InvalidPipeline('CRF not implemented')
             #     return self._crf(ind, xtrain, ytrain, xdev)
 
-    def _hmm(self, ind:Individual, trainX, trainY, devX):
-        lengths = [x.shape[0] for x in trainX]
+        results = []
 
-        trainX = np.vstack(trainX).astype(int)
-        trainY = np.hstack(trainY)
+        for sentence, pred in szip(dataset.dev_tokens, prediction):
+            new_sentence = []
+            for token, r in szip(sentence, pred):
+                new_sentence.append((token.init, token.end, r==1))
+            results.append(new_sentence)
+
+        return results
+
+    def _hmm(self, ind:Individual, xtrain, ytrain, xdev):
+        lengths = [x.shape[0] for x in xtrain]
+
+        xtrain = np.vstack(xtrain).astype(int)
+        ytrain = np.hstack(ytrain)
 
         try:
             hmm = MultinomialHMM(decode=ind.choose('viterbi', 'bestfirst'), alpha=ind.nextfloat())
-            hmm.fit(trainX, trainY, lengths)
-            devX = [x.astype(int) for x in devX]
-            return [hmm.predict(x) for x in devX]
+            hmm.fit(xtrain, ytrain, lengths)
+            xdev = [x.astype(int) for x in xdev]
+            return [hmm.predict(x) for x in xdev]
         except ValueError as e:
             if 'non-negative integers' in str(e):
                 raise InvalidPipeline(str(e))
@@ -821,48 +686,71 @@ class TassGrammar(Grammar):
             else:
                 raise
 
-    def _crf(self, ind:Individual, trainX, trainY, devX):
-        crf = CRF()
-        crf.fit(trainX, trainY)
-        return [crf.predict(x) for x in devX]
+    def _crf(self, ind:Individual, xtrain, ytrain, xdev):
+        raise NotImplementedError()
 
-    def _b(self, ind:Individual, dataset:Dataset, result_A):
-        # calcular la forma de la entrada
-        rows, cols = dataset.vectors[0].shape
+        crf = CRF()
+        crf.fit(xtrain, ytrain)
+        return [crf.predict(x) for x in xdev]
+
+    def _b(self, ind:Individual, dataset:TassDataset, result_A):
+        # compute input shape (for neural networks)
+        _, cols = dataset.vectors[0].shape
         intput_shape = cols
 
         clss = self._class(ind, intput_shape, 1)
 
         if isinstance(clss, Model):
-            xtrain, ytrain, xdev = dataset.task_b_by_sentence(result_A)
+            xtrain, ytrain, xdev = dataset.task_b_by_sentence()
         else:
-            xtrain, ytrain, xdev = dataset.task_b_by_word(result_A)
+            xtrain, ytrain, xdev = dataset.task_b_by_word()
             xtrain = np.vstack(xtrain)
             ytrain = np.hstack(ytrain)
 
         clss.fit(xtrain, ytrain)
 
         # construir la entrada dev
-        return [clss.predict(x) for x in xdev]
+        prediction = [clss.predict(x) for x in xdev]
+        results_B = []
 
-    def _c(self, ind:Individual, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
+        for sentence, pred in szip(result_A, prediction):
+            new_sentence = {}
+            for (start, end, kw), lbl in szip(sentence, pred):
+                if kw:
+                    new_sentence[(start, end)] = lbl
+            results_B.append(new_sentence)
 
-        # calcular la forma de la entrada
-        rows, cols = trainX[0].shape
+        return results_B
+
+    def _c(self, ind:Individual, dataset, result_A, val_labels):
+        # compute input shape (for neural networks)
+        _, cols = dataset.vectors[0].shape
         intput_shape = cols
-        rows, cols = trainY[0].shape
-        output_shape = cols
 
-        clss = self._class(ind, intput_shape, output_shape)
+        clss = self._class(ind, intput_shape, 6)
 
-        # construir la entrada train
-        trainX = np.vstack(trainX)
-        trainY = np.vstack(trainY)
+        if isinstance(clss, Model):
+            xtrain, ytrain, xdev = dataset.task_c_by_sentence()
+        else:
+            clss = OneVsRestClassifier(clss)
+            xtrain, ytrain, xdev = dataset.task_c_by_word()
+            xtrain = np.vstack(xtrain)
+            ytrain = np.hstack(ytrain)
 
-        clss.fit(trainX, trainY)
+        clss.fit(xtrain, ytrain)
 
-        return [clss.predict(x) for x in devX]
+        # construir la entrada dev
+        prediction = [clss.predict(x) for x in xdev]
+        results_B = []
+
+        for sentence, pred in szip(result_A, prediction):
+            new_sentence = {}
+            for (start, end, kw), lbl in szip(sentence, pred):
+                if kw:
+                    new_sentence[(start, end)] = lbl
+            results_B.append(new_sentence)
+
+        return results_B
 
     def _seq(self, i):
         if i.nextbool():
@@ -1158,7 +1046,7 @@ class TassGrammar(Grammar):
 
             matrices = []
 
-            for tok,vec in zip(tokens, vectors):
+            for tok,vec in szip(tokens, vectors):
                 tok_matrix = np.vstack([t.vector for t in tok])
                 matrices.append(np.hstack((tok_matrix, vec)))
 
