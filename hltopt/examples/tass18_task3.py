@@ -157,8 +157,30 @@ class Dataset:
 
         return xtrain, ytrain, xdev
 
+    def task_b_by_word(self, result_A):
+        self._check_repr()
 
-class MyGrammar(GrammarGE):
+        xtrain = []
+        ytrain = []
+
+        for sentence, labels in zip(self.vectors, self._labels_map()):
+            new_sent = []
+            new_lbl = []
+            for word, lbl in zip(sentence, labels):
+                if lbl:
+                    new_sent.append(word)
+                    new_lbl.append(lbl)
+            if new_sent:
+                new_sent = np.vstack(new_sent)
+                new_lbl = np.hstack(new_lbl)
+
+            xtrain.append(new_sent)
+            ytrain.append(new_lbl)
+
+        xdev = []
+
+
+class TassGrammar(Grammar):
     def __init__(self):
         super().__init__()
 
@@ -176,7 +198,7 @@ class MyGrammar(GrammarGE):
             'C'        : 'Class',
 
             # Sequence algorithms
-            'Seq'      : 'HMM | crf',
+            'Seq'      : 'HMM', # | crf',
             'HMM'      : 'HMMdec HMMalp',
             'HMMdec'   : 'viterbi | bestfirst',
             'HMMalp'   : 'f(0.01, 10)',
@@ -314,16 +336,7 @@ class MyGrammar(GrammarGE):
             result_A = self._a(ind, dataset)
 
             # Tarea B
-            trainX = []
-            trainY = []
-
-            for sent, lbls in zip(train, labels_map):
-                lbls = np.asarray(lbls)
-                idx = lbls != ''
-                trainX.append(sent[idx])
-                trainY.append(lbls[idx])
-
-            result_B = self._b(ind, trainX, trainY, dev)
+            result_B = self._b(ind, dataset, result_A)
 
             # Tarea C
             trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC)
@@ -754,7 +767,7 @@ class MyGrammar(GrammarGE):
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
 
-    def _a(self, i, dataset:Dataset):
+    def _a(self, ind:Individual, dataset:Dataset):
         choice = ind.choose('class', 'seq')
 
         if choice == 'class':
@@ -779,13 +792,15 @@ class MyGrammar(GrammarGE):
             return [clss.predict(x) for x in xdev]
         else:
             # sequence classifier
-            alg = ind.choose('hmm', 'crf')
+            # alg = ind.choose('hmm', 'crf')
 
-            if alg == 'hmm':
-                return self._hmm(ind, trainX, trainY, devX)
-            else:
-                raise InvalidPipeline('CRF not implemented')
-                return self._crf(ind, trainX, trainY, devX)
+            xtrain, ytrain, xdev = dataset.task_a_by_word()
+            return self._hmm(ind, xtrain, ytrain, xdev)
+
+            # if alg == 'hmm':
+            # else:
+            #     raise InvalidPipeline('CRF not implemented')
+            #     return self._crf(ind, xtrain, ytrain, xdev)
 
     def _hmm(self, ind:Individual, trainX, trainY, devX):
         lengths = [x.shape[0] for x in trainX]
@@ -811,24 +826,24 @@ class MyGrammar(GrammarGE):
         crf.fit(trainX, trainY)
         return [crf.predict(x) for x in devX]
 
-    def _b(self, ind:Individual, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
-
+    def _b(self, ind:Individual, dataset:Dataset, result_A):
         # calcular la forma de la entrada
-        rows, cols = trainX[0].shape
+        rows, cols = dataset.vectors[0].shape
         intput_shape = cols
 
         clss = self._class(ind, intput_shape, 1)
 
+        if isinstance(clss, Model):
+            xtrain, ytrain, xdev = dataset.task_b_by_sentence(result_A)
+        else:
+            xtrain, ytrain, xdev = dataset.task_b_by_word(result_A)
+            xtrain = np.vstack(xtrain)
+            ytrain = np.hstack(ytrain)
 
+        clss.fit(xtrain, ytrain)
 
-        # construir la entrada train
-        trainX = np.vstack(trainX)
-        trainY = np.hstack(trainY)
-
-        clss.fit(trainX, trainY)
-
-        return [clss.predict(x) for x in devX]
+        # construir la entrada dev
+        return [clss.predict(x) for x in xdev]
 
     def _c(self, ind:Individual, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
@@ -1173,7 +1188,7 @@ class MyGrammar(GrammarGE):
 #
 
 def main():
-    grammar = MyGrammar()
+    grammar = TassGrammar()
 
     for i in range(0, 100000):
         random.seed(i)
