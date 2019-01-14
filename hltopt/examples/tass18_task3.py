@@ -15,15 +15,17 @@ import yaml
 import numpy as np
 
 from scipy import sparse as sp
-
 from pathlib import Path
 
+from sklearn_crfsuite.estimator import CRF
+from seqlearn.hmm import MultinomialHMM
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.multiclass import OneVsRestClassifier
+from sklearn.preprocessing import OneHotEncoder
 
 from gensim.models import Word2Vec
 import gensim.downloader as api
@@ -34,7 +36,7 @@ from nltk.corpus import stopwords
 from keras.models import Sequential, Model
 from keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
 
-from ..ge import GrammarGE, GE, Individual, InvalidPipeline
+from ..ge import Grammar, PGE, Individual, InvalidPipeline
 
 
 class Token:
@@ -55,6 +57,7 @@ class Token:
         return repr(self.__dict__)
 
 
+<<<<<<< HEAD:hltopt/examples/tass_ge.py
 def cached(func):
     result = None
     @functools.wraps(func)
@@ -157,7 +160,12 @@ class Dataset:
 
 
 class MyGrammar(GrammarGE):
+=======
+class MyGrammar(Grammar):
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
     def __init__(self):
+        super().__init__()
+
         self.stemmer = SnowballStemmer("spanish")
         self.spacy_nlp = spacy.load('es')
 
@@ -171,7 +179,13 @@ class MyGrammar(GrammarGE):
             'B'        : 'Class',
             'C'        : 'Class',
 
-            'Seq'      : 'hmm | crf',
+            # Sequence algorithms
+            'Seq'      : 'HMM | crf',
+            'HMM'      : 'HMMdec HMMalp',
+            'HMMdec'   : 'viterbi | bestfirst',
+            'HMMalp'   : 'f(0.01, 10)',
+
+            # Classifiers
             'Class'    : 'LR | nb | SVM | dt | NN',
 
             # Classic classifiers
@@ -230,6 +244,7 @@ class MyGrammar(GrammarGE):
         }
 
     def evaluate(self, ind:Individual):
+<<<<<<< HEAD:hltopt/examples/tass_ge.py
         FAST = True
         TEST = False
 
@@ -240,11 +255,35 @@ class MyGrammar(GrammarGE):
         for file in (dataset_path / 'training').iterdir():
             if file.name.startswith('input'):
                 dataset.load(file)
+=======
+        # FAST = True
+        FAST = False
+
+        # load training data
+        dataset_path = Path.cwd() / 'hltopt' / 'datasets' / 'tass18_task3'
+
+        texts = []
+        labels = []
+        relations = []
+
+        for file in (dataset_path / 'training').iterdir():
+            if file.name.startswith('input'):
+                goldA = dataset_path / 'training' / ('output_A_' + file.name[6:])
+                goldB = dataset_path / 'training' / ('output_B_' + file.name[6:])
+                goldC = dataset_path / 'training' / ('output_C_' + file.name[6:])
+
+                text = file.open().read()
+                sentences = [s for s in text.split('\n') if s]
+                texts.extend(sentences)
+
+                self._parse_ann(sentences, goldA, goldB, goldC, labels, relations)
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
 
                 if FAST:
                     break
 
         if FAST:
+<<<<<<< HEAD:hltopt/examples/tass_ge.py
             dataset.validation_size = 10
         else:
             validation = dataset_path / 'develop' / 'input'/ 'input_develop.txt'
@@ -253,12 +292,25 @@ class MyGrammar(GrammarGE):
             if TEST:
                 test = dataset_path / 'test' / 'input'/ 'scenario1-ABC' / 'input_scenario1.txt'
                 dataset.validation_size = dataset.load(test)
+=======
+            validation_size = int(0.2 * len(texts))
+        else:
+            validation = dataset_path / 'develop'/ 'input_develop.txt'
+            validation_A = dataset_path / 'develop' / 'output_A_develop.txt'
+            validation_B = dataset_path / 'develop' / 'output_B_develop.txt'
+            validation_C = dataset_path / 'develop' / 'output_C_develop.txt'
+
+            # validation = dataset_path / 'test'/ 'scenario1-ABC' / 'input_scenario1.txt'
+            # validation_A = dataset_path / 'test' / 'scenario1-ABC' / 'output_A_scenario1.txt'
+            # validation_B = dataset_path / 'test' / 'scenario1-ABC' / 'output_B_scenario1.txt'
+            # validation_C = dataset_path / 'test' / 'scenario1-ABC' / 'output_C_scenario1.txt'
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
 
         return self._pipeline(ind, dataset)
 
     def _pipeline(self, ind, dataset):
         # 'Pipeline' : 'Repr A B C | Repr AB C |  Repr A BC | Repr ABC',
-        choice = ind.nextint(4)
+        choice = ind.choose('A B C', 'AB C', 'A BC', 'ABC')
 
         # repr es una lista de matrices (una matriz por cada oración):
         # [
@@ -297,7 +349,7 @@ class MyGrammar(GrammarGE):
         #     'target',
         # ]}])
 
-        if choice == 0:
+        if choice == 'A B C':
             # Ejecutar tareas A, B y C en secuencia
 
             # Tarea A
@@ -354,7 +406,7 @@ class MyGrammar(GrammarGE):
 
             return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
 
-        elif choice == 1:
+        elif choice == 'AB C':
             # Ejecutar tareas AB juntas y C en secuencia
 
             # Tarea AB
@@ -400,7 +452,7 @@ class MyGrammar(GrammarGE):
 
             return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
 
-        elif choice == 2:
+        elif choice == 'A BC':
             # Ejecutar tarea A y luego BC
 
             # Tarea A
@@ -721,7 +773,7 @@ class MyGrammar(GrammarGE):
     def _ab(self, i, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
 
-        choice = i.nextint(2)
+        choice = i.nextint()
 
         if choice == 0:
             # classifier
@@ -744,17 +796,24 @@ class MyGrammar(GrammarGE):
             # sequence classifier
             raise InvalidPipeline("Sequence not supported yet")
 
+<<<<<<< HEAD:hltopt/examples/tass_ge.py
     def _a(self, i, dataset:Dataset):
         choice = i.nextint(2)
+=======
+    def _a(self, ind:Individual, trainX, trainY, devX):
+        assert len(trainX) == len(trainY)
 
-        if choice == 0:
+        choice = ind.choose('class', 'seq')
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
+
+        if choice == 'class':
             # classifier
 
             # calcular la forma de la entrada
             rows, cols = dataset.vectors[0].shape
             intput_shape = cols
 
-            clss = self._class(i, intput_shape, 1)
+            clss = self._class(ind, intput_shape, 1)
 
             if isinstance(clss, Model):
                 xtrain, ytrain, xdev = dataset.task_a_by_sentence()
@@ -769,16 +828,46 @@ class MyGrammar(GrammarGE):
             return [clss.predict(x) for x in xdev]
         else:
             # sequence classifier
-            raise InvalidPipeline("Sequence not supported yet")
+            alg = ind.choose('hmm', 'crf')
 
-    def _b(self, i, trainX, trainY, devX):
+            if alg == 'hmm':
+                return self._hmm(ind, trainX, trainY, devX)
+            else:
+                raise InvalidPipeline('CRF not implemented')
+                return self._crf(ind, trainX, trainY, devX)
+
+    def _hmm(self, ind:Individual, trainX, trainY, devX):
+        lengths = [x.shape[0] for x in trainX]
+
+        trainX = np.vstack(trainX).astype(int)
+        trainY = np.hstack(trainY)
+
+        try:
+            hmm = MultinomialHMM(decode=ind.choose('viterbi', 'bestfirst'), alpha=ind.nextfloat())
+            hmm.fit(trainX, trainY, lengths)
+            devX = [x.astype(int) for x in devX]
+            return [hmm.predict(x) for x in devX]
+        except ValueError as e:
+            if 'non-negative integers' in str(e):
+                raise InvalidPipeline(str(e))
+            elif 'unknown categories' in str(e):
+                raise InvalidPipeline(str(e))
+            else:
+                raise
+
+    def _crf(self, ind:Individual, trainX, trainY, devX):
+        crf = CRF()
+        crf.fit(trainX, trainY)
+        return [crf.predict(x) for x in devX]
+
+    def _b(self, ind:Individual, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
 
         # calcular la forma de la entrada
         rows, cols = trainX[0].shape
         intput_shape = cols
 
-        clss = self._class(i, intput_shape, 1)
+        clss = self._class(ind, intput_shape, 1)
 
 
 
@@ -790,7 +879,7 @@ class MyGrammar(GrammarGE):
 
         return [clss.predict(x) for x in devX]
 
-    def _c(self, i, trainX, trainY, devX):
+    def _c(self, ind:Individual, trainX, trainY, devX):
         assert len(trainX) == len(trainY)
 
         # calcular la forma de la entrada
@@ -799,7 +888,7 @@ class MyGrammar(GrammarGE):
         rows, cols = trainY[0].shape
         output_shape = cols
 
-        clss = self._class(i, intput_shape, output_shape)
+        clss = self._class(ind, intput_shape, output_shape)
 
         # construir la entrada train
         trainX = np.vstack(trainX)
@@ -817,22 +906,27 @@ class MyGrammar(GrammarGE):
             #hmm
             return None
 
+<<<<<<< HEAD:hltopt/examples/tass_ge.py
     def _class(self, i, input_shape=None, output_shape=None):
+=======
+    def _class(self, ind:Individual, input_shape, output_shape):
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
         #LR | nb | SVM | dt | NN
-        des = i.nextint(5)
+        des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
         clss = None
-        if des == 0:
-            clss = self._lr(i)
-        elif des == 1:
+
+        if des == 'lr':
+            clss = self._lr(ind)
+        elif des == 'nb':
             clss = MultinomialNB()
-        elif des == 2:
-            clss = self._svm(i)
-        elif des == 3:
+        elif des == 'svm':
+            clss = self._svm(ind)
+        elif des == 'dt':
             clss = DecisionTreeClassifier()
         else:
-            return self._nn(i, input_shape, output_shape)
+            return self._nn(ind, input_shape, output_shape)
 
-        if output_shape > 1 and des < 4:
+        if output_shape > 1 and des != 'nn':
             clss = OneVsRestClassifier(clss)
 
         return clss
@@ -841,7 +935,7 @@ class MyGrammar(GrammarGE):
         return LogisticRegression(C=self._reg(i), penalty=self._penalty(i))
 
     def _reg(self, i):
-        return i.nextfloat(0.01, 100)
+        return i.nextfloat()
 
     def _penalty(self, i):
         return i.choose('l1', 'l2')
@@ -857,7 +951,7 @@ class MyGrammar(GrammarGE):
         try:
             # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
             model = Sequential()
-            option = i.nextint(3)
+            option = i.nextint()
 
             x = Input(shape=(input_size, 50))
             dropout = self._drop(i)
@@ -917,13 +1011,13 @@ class MyGrammar(GrammarGE):
         return model
 
     def _count(self, i):
-        return i.nextint(5) + 1
+        return i.nextint() + 1
 
     def _minfilter(self, i):
-        return i.nextint(5)
+        return i.nextint()
 
     def _maxfilter(self, i):
-        return i.nextint(5)
+        return i.nextint()
 
     def _formatcon(self, i):
         return i.choose('same', 'all', 'rand')
@@ -935,7 +1029,7 @@ class MyGrammar(GrammarGE):
         return lstm
 
     def _size(self, i):
-        return i.nextint(90) + 10
+        return i.nextint()
 
     def _dlayers(self, i, model, dropout):
         # Dense layers
@@ -966,10 +1060,10 @@ class MyGrammar(GrammarGE):
         return model
 
     def _minsize(self, i):
-        return i.nextint(90)+10
+        return i.nextint()
 
     def _maxsize(self, i):
-        return i.nextint(90)+10
+        return i.nextint()
 
     def _flayer(self, i, model, output_size, dropout):
         activation = i.choose('sigmoid', 'softmax')
@@ -1063,16 +1157,16 @@ class MyGrammar(GrammarGE):
 
     def _mulwords(self, i, tokens):
         #'MulWords' : 'countPhrase | freeling | Ngram',
-        choice = i.nextint(3)
+        choice = i.choose('countPhrase', 'freeling', 'Ngram')
 
-        if choice == 2:
-            ngram = i.nextint(2) + 2
+        if choice == 'Ngram':
+            ngram = i.nextint()
 
         return tokens
 
     def _ngram(self, i, tokens):
         #i(2,4)
-        n = i.nextint(3) + 2
+        n = i.nextint() + 2
         result = tokens
         for i in range(1, n+1):
             result += list(nltk.ngrams(tokens, i))
@@ -1080,7 +1174,7 @@ class MyGrammar(GrammarGE):
 
     def _embed(self, i, tokens):
         # 'Embed' : 'wordVec | onehot | none',
-        choice = i.nextint(3)
+        choice = i.choose('wv', 'onehot', 'none')
 
         # los objetos a codificar
         objs = [[dict(t.__dict__) for t in tok] for tok in tokens]
@@ -1091,7 +1185,7 @@ class MyGrammar(GrammarGE):
                 t.pop('end')
                 t.pop('text')
 
-        if choice == 0:
+        if choice == 'wv':
             # eliminar el texto y codificar normal
             for tok in objs:
                 for t in tok:
@@ -1108,7 +1202,7 @@ class MyGrammar(GrammarGE):
 
             return matrices
 
-        elif choice == 1:
+        elif choice == 'onehot':
             # eliminar el vector y codificar onehot
             for tok in objs:
                 for t in tok:
@@ -1134,17 +1228,34 @@ class MyGrammar(GrammarGE):
 def main():
     grammar = MyGrammar()
 
+<<<<<<< HEAD:hltopt/examples/tass_ge.py
     for i in range(1, 10000):
+=======
+    for i in range(0, 100000):
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/tass18_task3.py
         random.seed(i)
         print("-------\nRandom seed %i" % i)
 
+        ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
+        sample = ind.sample()
+
         try:
-            ind = Individual([random.uniform(0,1) for _ in range(100)])
-            print(yaml.dump(grammar.sample(ind)))
-            ind.reset()
+            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
+            sample['Pipeline'][1]['A'][0]['Seq'][0]['HMM']
+            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
+        except:
+            continue
+
+        print(yaml.dump(sample))
+        ind.reset()
+
+        try:
             print(grammar.evaluate(ind))
+            break
         except InvalidPipeline as e:
             print("Error", str(e))
+            continue
 
 if __name__ == '__main__':
     main()

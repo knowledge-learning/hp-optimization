@@ -2,6 +2,7 @@
 
 import pprint
 import random
+import yaml
 
 from nltk.corpus import movie_reviews, stopwords
 from sklearn.decomposition import PCA, FastICA, TruncatedSVD
@@ -10,11 +11,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.svm import SVC
-from ..ge import GrammarGE, GE, Individual
+from ..ge import Grammar, PGE, Individual
 
 
-class MyGrammar(GrammarGE):
+class MyGrammar(Grammar):
     def __init__(self, sentences, classes):
+<<<<<<< HEAD:hltopt/examples/sklearn_opinion_ge.py
+=======
+        super().__init__()
+
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/movie_reviews.py
         self.sentences = sentences[:200]
         self.classes = classes[:200]
 
@@ -34,14 +40,14 @@ class MyGrammar(GrammarGE):
 
     def evaluate(self, i:Individual):
         # preprocesamiento
-        if i.nextbool():
+        if i.choose('none', 'stopW') == 'none':
             sw = None
         else:
             sw = stopwords.words('english')
 
         # vectorizador
         vect_cls = i.choose(TfidfVectorizer, CountVectorizer)
-        n_gram = i.nextint(1) + 1
+        n_gram = i.nextint()
         vect = vect_cls(stop_words=sw, ngram_range=(1,n_gram))
 
         # reductor
@@ -58,7 +64,7 @@ class MyGrammar(GrammarGE):
             X = X.toarray()
 
         score = 0
-        n = 3
+        n = 1
         for _ in range(n):
             X_train, X_test, y_train, y_test = train_test_split(X, self.classes, test_size=0.33)
             clas.fit(X_train, y_train)
@@ -80,7 +86,11 @@ class MyGrammar(GrammarGE):
         return GaussianNB()
 
     def _lr(self, i:Individual):
+<<<<<<< HEAD:hltopt/examples/sklearn_opinion_ge.py
         return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat(0.01, 10))
+=======
+        return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat())
+>>>>>>> f6ed7854f6228e026db2f9c22e5c5a8787ef8a60:hltopt/examples/movie_reviews.py
 
 
 def load_corpus():
@@ -115,7 +125,7 @@ def main():
     grammar = MyGrammar(*load_corpus())
 
     print("Running heuristic")
-    ge = GE(grammar, popsize=10, selected=0.5, rate=0.975)
+    ge = PGE(grammar, popsize=100, selected=10, learning=0.25)
     ge.run(100)
 
 
