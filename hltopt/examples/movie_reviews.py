@@ -36,6 +36,10 @@ class MyGrammar(Grammar):
         }
 
     def evaluate(self, i:Individual):
+        # seed = hash(yaml.dump(i.sample()))
+        # random.seed(seed)
+        # return random.uniform(0,1)
+
         # preprocesamiento
         if i.choose('none', 'stopW') == 'none':
             sw = None
@@ -117,8 +121,11 @@ def main():
     grammar = MyGrammar(*load_corpus())
 
     print("Running heuristic")
-    ge = PGE(grammar, popsize=100, selected=10, learning=0.25)
+    ge = PGE(grammar, popsize=100, selected=10, learning=0.05, verbose=True, timeout=10)
     ge.run(100)
+
+    print(ge.pop_avg)
+    print(ge.pop_std)
 
 
 if __name__ == '__main__':

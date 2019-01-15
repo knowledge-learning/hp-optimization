@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 
-import yaml
-import random
 import json
 import multiprocessing
-
+import random
 from queue import Empty
+
+import numpy as np
+
+import yaml
+
 from .metaheuristic import Metaheuristic
 from .utils import InvalidPipeline
 
@@ -99,7 +102,7 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None):
+    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -118,6 +121,11 @@ class PGE(Metaheuristic):
             selected = int(selected * popsize)
 
         self.selected = selected
+        self.verbose = verbose
+
+    def log(self, *args, **kwargs):
+        if self.verbose:
+            print(*args, **kwargs)
 
     def _sample_population(self):
         """Construye la población inicial"""
@@ -149,7 +157,7 @@ class PGE(Metaheuristic):
             p.normalize()
 
         self._grammar.merge(model, self.learning)
-        # print(yaml.dump(self._grammar._model))
+        # self.log(yaml.dump(self._grammar._model))
 
     def _update_ind_model(self, model, symbol, rule):
         if isinstance(rule, list):
@@ -178,7 +186,7 @@ class PGE(Metaheuristic):
             f = self._grammar.evaluate(ind)
             q.put(f)
         except InvalidPipeline as e:
-            print("!", str(e))
+            self.log("!", str(e))
             q.put(0)
 
     def _evaluate(self, ind:Individual):
@@ -190,12 +198,12 @@ class PGE(Metaheuristic):
         try:
             f = q.get(block=True, timeout=self.timeout)
         except Empty:
-            print("! Timeout")
+            self.log("! Timeout")
             f = 0
 
-        print("Fitness: %.3f" % f)
+        self.log("Fitness: %.3f" % f)
         ind.reset()
-        print(yaml.dump(ind.sample()))
+        self.log(yaml.dump(ind.sample()))
         return f
 
     def run(self, evals:int):
@@ -203,6 +211,8 @@ class PGE(Metaheuristic):
 
         it = 0
         self.current_best, self.current_fn = None, 0
+        self.pop_avg = []
+        self.pop_std = []
 
         while it < evals:
             self.population = self._sample_population()
@@ -212,7 +222,10 @@ class PGE(Metaheuristic):
                 if fn > self.current_fn:
                     self.current_best = ind
                     self.current_fn = fn
-                    print("Updated best: ", self.current_fn)
+                    self.log("Updated best: ", self.current_fn)
+
+            self.pop_avg.append(np.mean(self.fitness))
+            self.pop_std.append(np.std(self.fitness))
 
             self.save(GEEncoder)
 
