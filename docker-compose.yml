@@ -2,7 +2,7 @@ version: "3"
 
 services:
   notebook:
-    image: "matcomuh/ml:latest"
+    image: "matcomuh/ml:cpu"
     ports:
       - "8888:8888"
     volumes:
@@ -13,7 +13,7 @@ services:
     command: "jupyter notebook --allow-root --NotebookApp.ip=0.0.0.0 --NotebookApp.token= --no-browser"
 
   test:
-    image: "matcomuh/ml:latest"
+    image: "matcomuh/ml:cpu"
     volumes:
       - ".:/home/hlt"
       - "~/gensim-data:/root/gensim-data"
@@ -22,7 +22,7 @@ services:
     command: "pytest"
 
   terminal:
-    image: "matcomuh/ml:latest"
+    image: "matcomuh/ml:cpu"
     volumes:
       - ".:/home/hlt"
       - "~/gensim-data:/root/gensim-data"

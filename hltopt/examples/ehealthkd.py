@@ -33,8 +33,8 @@ import gensim.downloader as api
 from nltk.stem.snowball import SnowballStemmer
 from nltk.corpus import stopwords
 
-from keras.models import Sequential, Model
-from keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
 
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
 from ..datasets.ehealthkd import TassDataset
@@ -144,7 +144,7 @@ class TassGrammar(Grammar):
         TEST = False
 
         # load training data
-        dataset_path = Path.cwd() / 'hltopt' / 'examples' / 'datasets' / 'tass18_task3'
+        dataset_path = Path.cwd() / 'hltopt' / 'datasets' / 'ehealthkd'
         dataset = TassDataset()
 
         for file in (dataset_path / 'training').iterdir():
@@ -170,259 +170,26 @@ class TassGrammar(Grammar):
         # 'Pipeline' : 'Repr A B C | Repr AB C |  Repr A BC | Repr ABC',
         choice = ind.choose('A B C', 'AB C', 'A BC', 'ABC')
 
-        # repr es una lista de matrices (una matriz por cada oración):
-        # [
-        #   array([           <- oración 0
-        #       0.1, 0.4, ... <- token 0
-        #       0.2, 0.6, ... <- token 1
-        #       ...
-        #       0.9, 0.2, ... <- token n
-        #   ]),
-        #   ...               <- oración 1
-        # ]
         self._repr(ind, dataset)
 
         if choice == 'A B C':
             # Ejecutar tareas A, B y C en secuencia
-
-            # Tarea A
             result_A = self._a(ind, dataset)
-
-            # Tarea B
             val_labels = self._b(ind, dataset, result_A)
-
-            # Tarea C
-            val_relations = self._c(ind, dataset, result_A, val_labels)
-
-            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC)
-            result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
-
-            # Calcular fitness
-            # Labels
-            ids = 0
-            val_labels = []
-            for sent, resA, resB in szip(tokens[-validation_size:], result_A, result_B):
-                sentence_labels = {}
-                for tok, clsA, clsB in szip(sent, resA, resB):
-                    if clsA == 1:
-                        sentence_labels[(tok.init, tok.end)] = (ids, clsB)
-                        ids += 1
-                val_labels.append(sentence_labels)
-
-            # relations
-            val_relations = []
-            for lbl, resC, mapC in szip(val_labels, result_C, valCmapping[-validation_size:]):
-                sentence_rels = []
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglb = lbl[org]
-                    destid, destlb = lbl[dest]
-
-                    rels = mappingC.inverse_transform(rels.reshape(1,-1))[0]
-                    for r in rels:
-                        if r in ['subject', 'target']:
-                            if orglb == 'Action' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-                        else:
-                            if orglb == 'Concept' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-
-                val_relations.append(sentence_rels)
-
-            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
-
+            val_relations = self._c(ind, dataset, val_labels)
         elif choice == 'AB C':
             # Ejecutar tareas AB juntas y C en secuencia
-
-            # Tarea AB
-            labels_AB = [np.asarray(sent) for sent in labels_map]
-            result_AB = self._ab(ind, train, labels_AB[:-validation_size], dev)
-
-            # Tarea C
-            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC)
-            result_C = self._c(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
-
-            # Calcular fitness
-            # Labels
-            ids = 0
-            val_labels = []
-            for sent, resAB in szip(tokens[-validation_size:], result_AB):
-                sentence_labels = {}
-                for tok, clsAB in szip(sent, resAB):
-                    if clsAB:
-                        sentence_labels[(tok.init, tok.end)] = (ids, clsAB)
-                        ids += 1
-                val_labels.append(sentence_labels)
-
-            # relations
-            val_relations = []
-            for lbl, resC, mapC in szip(val_labels, result_C, valCmapping[-validation_size:]):
-                sentence_rels = []
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglb = lbl[org]
-                    destid, destlb = lbl[dest]
-
-                    rels = mappingC.inverse_transform(rels.reshape(1,-1))[0]
-                    for r in rels:
-                        if r in ['subject', 'target']:
-                            if orglb == 'Action' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-                        else:
-                            if orglb == 'Concept' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-
-                val_relations.append(sentence_rels)
-
-            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
-
+            val_labels = self._ab(ind, dataset)
+            val_relations = self._c(ind, dataset, val_labels)
         elif choice == 'A BC':
             # Ejecutar tarea A y luego BC
-
-            # Tarea A
-            labels_A = [np.asarray([1 if l else 0 for l in sent]) for sent in labels_map]
-            result_A = self._a(ind, train, labels_A[:-validation_size], dev)
-
-            # Tarea BC
-            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC, build_b=True)
-            result_BC = self._bc(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
-
-            # Calcular fitness
-            # Labels
-            ids = 0
-            val_labels = []
-            for sent, resA, resB in szip(tokens[-validation_size:], result_A, result_BC):
-                sentence_labels = {}
-                for tok, clsA in szip(sent, resA):
-                    if clsA == 1:
-                        sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
-                        ids += 1
-                val_labels.append(sentence_labels)
-
-            # compute actual labels
-            # labels map
-            bc_labels_map = {
-                (0,0): 'None',
-                (1,0): 'Concept',
-                (0,1):  'Action'
-            }
-
-            for lbl, resC, mapC in szip(val_labels, result_BC, valCmapping[-validation_size:]):
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglbs = lbl[org]
-                    destid, destlbs = lbl[dest]
-
-                    orglbl = bc_labels_map[tuple(rels[-4:-2])]
-                    destlbl = bc_labels_map[tuple(rels[-2:])]
-
-                    if orglbl in orglbs:
-                        orglbs[orglbl] += 1
-                    if destlbl in  destlbs:
-                        destlbs[destlbl] += 1
-
-            val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
-
-            # # compute relations
-            val_relations = []
-            for lbl, resC, mapC in szip(val_labels, result_BC, valCmapping[-validation_size:]):
-                sentence_rels = []
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglb = lbl[org]
-                    destid, destlb = lbl[dest]
-
-                    rels = mappingC.inverse_transform(rels[:-4].reshape(1,-1))[0]
-                    for r in rels:
-                        if r in ['subject', 'target']:
-                            if orglb == 'Action' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-                        else:
-                            if orglb == 'Concept' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-
-                val_relations.append(sentence_rels)
-
-            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
-
+            results_A = self._a(ind, dataset)
+            val_labels, val_relations = self._bc(ind, dataset, results_A)
         else:
             # Ejecutar Tarea ABC junta
+            val_labels, val_relations = self._abc(ind, dataset)
 
-            # Tarea ABC
-            trainCx, trainCy, valCmapping = self._build_c_mapping_pairs(rep, tokens, labels, relations, mappingC, build_b=True, build_a=True)
-            result_ABC = self._abc(ind, trainCx[:-validation_size], trainCy[:-validation_size], trainCx[-validation_size:])
-
-            # Calcular fitness
-
-            # compute actual labels
-            # labels map
-            bc_labels_map = {
-                (0,0): 'None',
-                (1,0): 'Concept',
-                (0,1):  'Action'
-            }
-
-            # Labels
-            ids = 0
-            val_labels = []
-            for sent in tokens[-validation_size:]:
-                sentence_labels = {}
-                for tok in sent:
-                    sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0, 'None':0})
-                    ids += 1
-                val_labels.append(sentence_labels)
-
-            # compute actual labels
-            # labels map
-            bc_labels_map = {
-                (0,0): 'None',
-                (1,0): 'Concept',
-                (0,1): 'Action',
-                (1,1): 'None'
-            }
-
-            for lbl, resC, mapC in szip(val_labels, result_ABC, valCmapping[-validation_size:]):
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglbs = lbl[org]
-                    destid, destlbs = lbl[dest]
-
-                    orglbl = bc_labels_map[tuple(rels[-4:-2])]
-                    destlbl = bc_labels_map[tuple(rels[-2:])]
-
-                    orglbs[orglbl] += 1
-                    destlbs[destlbl] += 1
-
-            val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
-            val_labels = [{ tok: (ids, lbl) for tok, (ids,lbl) in sent.items() if lbl != 'None'} for sent in val_labels]
-
-            # # compute relations
-            val_relations = []
-            for lbl, resC, mapC in szip(val_labels, result_ABC, valCmapping[-validation_size:]):
-                sentence_rels = []
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglb = lbl[org]
-                    destid, destlb = lbl[dest]
-
-                    rels = mappingC.inverse_transform(rels[:-4].reshape(1,-1))[0]
-                    for r in rels:
-                        if r in ['subject', 'target']:
-                            if orglb == 'Action' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-                        else:
-                            if orglb == 'Concept' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-
-                val_relations.append(sentence_rels)
-
-            return self._score(labels[-validation_size:], val_labels, relations[-validation_size:], val_relations)
+        return self._score(dataset.dev_labels, val_labels, dataset.dev_relations, val_relations)
 
     def _score(self, train_labels, val_labels, train_relations, val_relations):
         assert len(train_labels) == len(val_labels)
@@ -489,12 +256,13 @@ class TassGrammar(Grammar):
                 if (r,to,td) not in r1:
                     spuriousC += 1
 
-
         top = (correctA + 0.5 * partialA + correctB + correctC)
-        precision = top / (correctA + partialA + correctB + incorrectB + spuriousA + correctC + spuriousC)
-        recall = top / (correctA + partialA + correctB + incorrectB + missingA + correctC + missingC)
+        spr = (correctA + partialA + correctB + incorrectB + spuriousA + correctC + spuriousC)
+        precision = top / spr if spr else 0
+        msn = (correctA + partialA + correctB + incorrectB + missingA + correctC + missingC)
+        recall = top / msn if msn else 0
 
-        return 2 * precision * recall / (precision + recall)
+        return 2 * precision * recall / (precision + recall) if (precision + recall) else 0
 
     def _build_c_mapping_pairs(self, rep, tokens, labels, relations, mappingC, build_b=False, build_a=False):
         # mapping de la tarea C (perdón)
@@ -558,69 +326,204 @@ class TassGrammar(Grammar):
 
         return trainCx, trainCy, valCmapping
 
-    def _abc(self, i, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
-
+    def _abc(self, ind, dataset):
         # calcular la forma de la entrada
-        rows, cols = trainX[0].shape
+        _, cols = dataset.vectors[0].shape
         intput_shape = cols
-        rows, cols = trainY[0].shape
-        output_shape = cols
+        output_shape = 10
 
-        clss = self._class(i, intput_shape, output_shape)
+        clss = self._class(ind, intput_shape, output_shape)
 
-        # construir la entrada train
-        trainX = np.vstack(trainX)
-        trainY = np.vstack(trainY)
+        if isinstance(clss, Model):
+            xtrain, ytrain, xdev, mapping = dataset.task_abc_by_sentence()
+        else:
+            xtrain, ytrain, xdev, mapping = dataset.task_abc_by_word()
+            clss = OneVsRestClassifier(clss)
+            xtrain = np.vstack(xtrain)
+            ytrain = np.vstack(ytrain)
 
-        clss.fit(trainX, trainY)
+        clss.fit(xtrain, ytrain)
 
-        return [clss.predict(x) for x in devX]
+        predictions = [clss.predict(x) for x in xdev]
 
-    def _bc(self, i, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
+        # Ids
+        ids = 0
+        val_labels = []
+        for sent in dataset.dev_tokens:
+            sentence_labels = {}
+            for tok in sent:
+                sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0, 'None':0})
+                ids += 1
+            val_labels.append(sentence_labels)
 
+        # labels map
+        bc_labels_map = {
+            (0,0): 'None',
+            (1,0): 'Concept',
+            (0,1): 'Action',
+            (1,1): 'None'
+        }
+
+        # Labels
+        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
+            for rels, (org, dest) in szip(resC, mapC):
+                if org not in lbl or dest not in lbl:
+                    continue
+                orgid, orglbs = lbl[org]
+                destid, destlbs = lbl[dest]
+
+                orglbl = bc_labels_map[tuple(rels[-4:-2])]
+                destlbl = bc_labels_map[tuple(rels[-2:])]
+
+                orglbs[orglbl] += 1
+                destlbs[destlbl] += 1
+
+        val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
+        val_labels = [{ tok: (ids, lbl) for tok, (ids,lbl) in sent.items() if lbl != 'None'} for sent in val_labels]
+
+        # Relations
+        val_relations = []
+        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
+            sentence_rels = []
+            for rels, (org, dest) in szip(resC, mapC):
+                if org not in lbl or dest not in lbl:
+                    continue
+                orgid, orglb = lbl[org]
+                destid, destlb = lbl[dest]
+
+                rels = dataset.relmap.inverse_transform(rels[:-4].reshape(1,-1))[0]
+                for r in rels:
+                    if r in ['subject', 'target']:
+                        if orglb == 'Action' and destlb == 'Concept':
+                            sentence_rels.append((r, orgid, destid))
+                    else:
+                        if orglb == 'Concept' and destlb == 'Concept':
+                            sentence_rels.append((r, orgid, destid))
+
+            val_relations.append(sentence_rels)
+
+        return val_labels, val_relations
+
+    def _bc(self, ind, dataset, results_A):
         # calcular la forma de la entrada
-        rows, cols = trainX[0].shape
+        _, cols = dataset.vectors[0].shape
         intput_shape = cols
-        rows, cols = trainY[0].shape
-        output_shape = cols
+        output_shape = 10
 
-        clss = self._class(i, intput_shape, output_shape)
+        clss = self._class(ind, intput_shape, output_shape)
 
-        # construir la entrada train
-        trainX = np.vstack(trainX)
-        trainY = np.vstack(trainY)
+        if isinstance(clss, Model):
+            xtrain, ytrain, xdev, mapping = dataset.task_bc_by_sentence()
+        else:
+            xtrain, ytrain, xdev, mapping = dataset.task_bc_by_word()
+            clss = OneVsRestClassifier(clss)
+            xtrain = np.vstack(xtrain)
+            ytrain = np.vstack(ytrain)
 
-        clss.fit(trainX, trainY)
+        clss.fit(xtrain, ytrain)
 
-        return [clss.predict(x) for x in devX]
+        predictions = [clss.predict(x) for x in xdev]
 
-    def _ab(self, i, trainX, trainY, devX):
-        assert len(trainX) == len(trainY)
+        # Labels
+        ids = 0
+        val_labels = []
+        for sent, resA, resB in szip(dataset.dev_tokens, results_A, predictions):
+            sentence_labels = {}
+            for tok, clsA in szip(sent, resA):
+                if clsA:
+                    sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
+                    ids += 1
+            val_labels.append(sentence_labels)
 
-        choice = i.nextint()
+        # compute actual labels
+        # labels map
+        bc_labels_map = {
+            (0,0): 'None',
+            (1,1): 'None',
+            (1,0): 'Concept',
+            (0,1):  'Action'
+        }
 
-        if choice == 0:
+        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
+            for rels, (org, dest) in szip(resC, mapC):
+                if org not in lbl or dest not in lbl:
+                    continue
+                orgid, orglbs = lbl[org]
+                destid, destlbs = lbl[dest]
+
+                orglbl = bc_labels_map[tuple(rels[-4:-2])]
+                destlbl = bc_labels_map[tuple(rels[-2:])]
+
+                if orglbl in orglbs:
+                    orglbs[orglbl] += 1
+                if destlbl in  destlbs:
+                    destlbs[destlbl] += 1
+
+        val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
+
+        # # compute relations
+        val_relations = []
+        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
+            sentence_rels = []
+            for rels, (org, dest) in szip(resC, mapC):
+                if org not in lbl or dest not in lbl:
+                    continue
+                orgid, orglb = lbl[org]
+                destid, destlb = lbl[dest]
+
+                rels = dataset.relmap.inverse_transform(rels[:-4].reshape(1,-1))[0]
+                for r in rels:
+                    if r in ['subject', 'target']:
+                        if orglb == 'Action' and destlb == 'Concept':
+                            sentence_rels.append((r, orgid, destid))
+                    else:
+                        if orglb == 'Concept' and destlb == 'Concept':
+                            sentence_rels.append((r, orgid, destid))
+
+            val_relations.append(sentence_rels)
+
+        return val_labels, val_relations
+
+    def _ab(self, ind, dataset):
+        choice = ind.choose('class', 'seq')
+
+        if choice == 'class':
             # classifier
 
             # calcular la forma de la entrada
-            rows, cols = trainX[0].shape
+            _, cols = dataset.vectors[0].shape
             intput_shape = cols
 
-            clss = self._class(i, intput_shape, 1)
+            clss = self._class(ind, intput_shape, 3)
 
-            # construir la entrada train
-            trainX = np.vstack(trainX)
-            trainY = np.hstack(trainY)
+            if isinstance(clss, Model):
+                xtrain, ytrain, xdev = dataset.task_ab_by_sentence()
+            else:
+                xtrain, ytrain, xdev = dataset.task_ab_by_word()
+                xtrain = np.vstack(xtrain)
+                ytrain = np.hstack(ytrain)
 
-            clss.fit(trainX, trainY)
+            clss.fit(xtrain, ytrain)
 
             # construir la entrada dev
-            return [clss.predict(x) for x in devX]
+            prediction = [clss.predict(x) for x in xdev]
         else:
             # sequence classifier
-            raise InvalidPipeline("Sequence not supported yet")
+            xtrain, ytrain, xdev = dataset.task_a_by_word()
+            prediction = self._hmm(ind, xtrain, ytrain, xdev)
+
+        # Labels
+        ids = 0
+        val_labels = []
+        for sent, resAB in szip(dataset.dev_tokens, prediction):
+            sentence_labels = {}
+            for tok, clsAB in szip(sent, resAB):
+                if clsAB:
+                    sentence_labels[(tok.init, tok.end)] = (ids, clsAB)
+                    ids += 1
+            val_labels.append(sentence_labels)
+
+        return val_labels
 
     def _a(self, ind:Individual, dataset:TassDataset):
         choice = ind.choose('class', 'seq')
@@ -647,22 +550,17 @@ class TassGrammar(Grammar):
             prediction = [clss.predict(x) for x in xdev]
         else:
             # sequence classifier
-            # alg = ind.choose('hmm', 'crf')
-
             xtrain, ytrain, xdev = dataset.task_a_by_word()
             prediction = self._hmm(ind, xtrain, ytrain, xdev)
 
-            # if alg == 'hmm':
-            # else:
-            #     raise InvalidPipeline('CRF not implemented')
-            #     return self._crf(ind, xtrain, ytrain, xdev)
-
         results = []
+        ids = 0
 
         for sentence, pred in szip(dataset.dev_tokens, prediction):
             new_sentence = []
             for token, r in szip(sentence, pred):
-                new_sentence.append((token.init, token.end, r==1))
+                ids += 1
+                new_sentence.append((token.init, token.end, r==1, ids))
             results.append(new_sentence)
 
         return results
@@ -715,14 +613,14 @@ class TassGrammar(Grammar):
 
         for sentence, pred in szip(result_A, prediction):
             new_sentence = {}
-            for (start, end, kw), lbl in szip(sentence, pred):
+            for (start, end, kw, ids), lbl in szip(sentence, pred):
                 if kw:
-                    new_sentence[(start, end)] = lbl
+                    new_sentence[(start, end)] = (ids, lbl)
             results_B.append(new_sentence)
 
         return results_B
 
-    def _c(self, ind:Individual, dataset, result_A, val_labels):
+    def _c(self, ind:Individual, dataset, val_labels):
         # compute input shape (for neural networks)
         _, cols = dataset.vectors[0].shape
         intput_shape = cols
@@ -730,27 +628,39 @@ class TassGrammar(Grammar):
         clss = self._class(ind, intput_shape, 6)
 
         if isinstance(clss, Model):
-            xtrain, ytrain, xdev = dataset.task_c_by_sentence()
+            xtrain, ytrain, xdev, mapping = dataset.task_c_by_sentence()
         else:
             clss = OneVsRestClassifier(clss)
-            xtrain, ytrain, xdev = dataset.task_c_by_word()
+            xtrain, ytrain, xdev, mapping = dataset.task_c_by_word()
             xtrain = np.vstack(xtrain)
-            ytrain = np.hstack(ytrain)
+            ytrain = np.vstack(ytrain)
 
         clss.fit(xtrain, ytrain)
 
         # construir la entrada dev
         prediction = [clss.predict(x) for x in xdev]
-        results_B = []
+        val_relations = []
 
-        for sentence, pred in szip(result_A, prediction):
-            new_sentence = {}
-            for (start, end, kw), lbl in szip(sentence, pred):
-                if kw:
-                    new_sentence[(start, end)] = lbl
-            results_B.append(new_sentence)
+        for lbl, resC, mapC in szip(val_labels, prediction, mapping):
+                sentence_rels = []
+                for rels, (org, dest) in szip(resC, mapC):
+                    if org not in lbl or dest not in lbl:
+                        continue
+                    orgid, orglb = lbl[org]
+                    destid, destlb = lbl[dest]
 
-        return results_B
+                    rels = dataset.relmap.inverse_transform(rels.reshape(1,-1))[0]
+                    for r in rels:
+                        if r in ['subject', 'target']:
+                            if orglb == 'Action' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+                        else:
+                            if orglb == 'Concept' and destlb == 'Concept':
+                                sentence_rels.append((r, orgid, destid))
+
+                val_relations.append(sentence_rels)
+
+        return val_relations
 
     def _seq(self, i):
         if i.nextbool():
@@ -775,9 +685,6 @@ class TassGrammar(Grammar):
             clss = DecisionTreeClassifier()
         else:
             return self._nn(ind, input_shape, output_shape)
-
-        if output_shape > 1 and des != 'nn':
-            clss = OneVsRestClassifier(clss)
 
         return clss
 
@@ -1087,9 +994,7 @@ def main():
 
         try:
             assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['A'][0]['Seq'][0]['HMM']
-            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
-            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
+            sample['Pipeline'][1]['ABC'][0]['Class'][0]['LR']
         except:
             continue
 

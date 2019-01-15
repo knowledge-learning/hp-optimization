@@ -5,6 +5,7 @@ import bisect
 import functools
 from pathlib import Path
 from ...utils import szip
+from sklearn.feature_extraction import DictVectorizer
 
 
 def cached(func):
@@ -26,6 +27,7 @@ class TassDataset:
         self.validation_size = 0
         self.vectors = []
         self.tokens = []
+        self.relmap = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
 
     def load(self, finput:Path):
         goldA = finput.parent / ('output_A_' + finput.name[6:])
@@ -125,6 +127,22 @@ class TassDataset:
         self._check_repr()
         return self.dev(self.tokens)
 
+    @property
+    def train_labels(self):
+        return self.train(self.labels)
+
+    @property
+    def train_relations(self):
+        return self.train(self.relations)
+
+    @property
+    def dev_labels(self):
+        return self.dev(self.labels)
+
+    @property
+    def dev_relations(self):
+        return self.dev(self.relations)
+
     def task_a_by_word(self):
         self._check_repr()
 
@@ -161,12 +179,183 @@ class TassDataset:
     def task_c_by_word(self):
         self._check_repr()
 
-        xtrain = []
-        ytrain = []
+        x = []
+        y = []
+        mapping = []
 
-        for tokens, relations in szip(self.train(self.tokens), self.train(self.relations)):
-            for tok in self.tokens:
-                print(tok.id)
+        for feats, sent, lbls, rels in szip(self.vectors, self.tokens, self.labels, self.relations):
+            rel_pairs = []
+            rel_map = []
+            sent_mapp = []
+            for i,t1 in enumerate(sent):
+                if (t1.init, t1.end) not in lbls:
+                    continue
 
-            for rel, org, dest in relations:
-                print(rel, org, dest)
+                for j,t2 in enumerate(sent):
+                    if (t2.init, t2.end) not in lbls:
+                        continue
+
+                    pair_map = {}
+
+                    # id1, id2 son los id de 2 tokens
+                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
+                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
+
+                    rel_pairs.append(np.hstack((feats[i], feats[j])))
+
+                    # calculamos todas las relaciones entre id1 y id2
+                    for rel, org, dest in rels:
+                        if org == id1 and dest == id2:
+                            pair_map[rel] = True
+
+                    rel_map.append(pair_map)
+                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
+
+            mapping.append(sent_mapp)
+            rel_pairs = np.vstack(rel_pairs)
+            rel_map = self.relmap.transform(rel_map).toarray()
+
+            x.append(rel_pairs)
+            y.append(rel_map)
+
+        xtrain = self.train(x)
+        ytrain = self.train(y)
+        xdev = self.dev(x)
+        mapping = self.dev(mapping)
+
+        return xtrain, ytrain, xdev, mapping
+
+    def task_ab_by_word(self):
+        self._check_repr()
+
+        xtrain = self.train_vectors
+        ytrain = [np.asarray(sent) for sent in self.train(self.labels_map)]
+        xdev = self.dev_vectors
+
+        return xtrain, ytrain, xdev
+
+    def task_bc_by_word(self):
+        self._check_repr()
+
+        x = []
+        y = []
+        mapping = []
+
+        label_maps = {
+            'Action': [0,1],
+            'Concept': [1,0],
+            None: [0,0]
+        }
+
+        for feats, sent, lbls, rels in szip(self.vectors, self.tokens, self.labels, self.relations):
+            rel_pairs = []
+            rel_map = []
+            rel_clss = []
+            sent_mapp = []
+            for i,t1 in enumerate(sent):
+                if (t1.init, t1.end) not in lbls:
+                    continue
+
+                for j,t2 in enumerate(sent):
+                    if (t2.init, t2.end) not in lbls:
+                        continue
+
+                    pair_map = {}
+
+                    # id1, id2 son los id de 2 tokens
+                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
+                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
+
+                    rel_pairs.append(np.hstack((feats[i], feats[j])))
+
+                    # calculamos todas las relaciones entre id1 y id2
+                    for rel, org, dest in rels:
+                        if org == id1 and dest == id2:
+                            pair_map[rel] = True
+
+                    rel_map.append(pair_map)
+                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
+
+                    # task B specific representation
+                    lbl1e = label_maps[lbl1]
+                    lbl2e = label_maps[lbl2]
+                    lble = np.asarray(lbl1e + lbl2e)
+                    rel_clss.append(lble)
+
+            mapping.append(sent_mapp)
+            rel_pairs = np.vstack(rel_pairs)
+            rel_map = self.relmap.transform(rel_map).toarray()
+
+            # task B specific representation
+            rel_clss = np.vstack(rel_clss)
+            rel_map = np.hstack((rel_map, rel_clss))
+
+            x.append(rel_pairs)
+            y.append(rel_map)
+
+        xtrain = self.train(x)
+        ytrain = self.train(y)
+        xdev = self.dev(x)
+        mapping = self.dev(mapping)
+
+        return xtrain, ytrain, xdev, mapping
+
+    def task_abc_by_word(self):
+        self._check_repr()
+
+        x = []
+        y = []
+        mapping = []
+
+        label_maps = {
+            'Action': [0,1],
+            'Concept': [1,0],
+            None: [0,0]
+        }
+
+        for feats, sent, lbls, rels in szip(self.vectors, self.tokens, self.labels, self.relations):
+            rel_pairs = []
+            rel_map = []
+            rel_clss = []
+            sent_mapp = []
+            for i,t1 in enumerate(sent):
+                for j,t2 in enumerate(sent):
+                    pair_map = {}
+
+                    # id1, id2 son los id de 2 tokens
+                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
+                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
+
+                    rel_pairs.append(np.hstack((feats[i], feats[j])))
+
+                    # calculamos todas las relaciones entre id1 y id2
+                    for rel, org, dest in rels:
+                        if org == id1 and dest == id2:
+                            pair_map[rel] = True
+
+                    rel_map.append(pair_map)
+                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
+
+                    # task B specific representation
+                    lbl1e = label_maps[lbl1]
+                    lbl2e = label_maps[lbl2]
+                    lble = np.asarray(lbl1e + lbl2e)
+                    rel_clss.append(lble)
+
+            mapping.append(sent_mapp)
+            rel_pairs = np.vstack(rel_pairs)
+            rel_map = self.relmap.transform(rel_map).toarray()
+
+            # task B specific representation
+            rel_clss = np.vstack(rel_clss)
+            rel_map = np.hstack((rel_map, rel_clss))
+
+            x.append(rel_pairs)
+            y.append(rel_map)
+
+        xtrain = self.train(x)
+        ytrain = self.train(y)
+        xdev = self.dev(x)
+        mapping = self.dev(mapping)
+
+        return xtrain, ytrain, xdev, mapping

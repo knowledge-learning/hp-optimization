@@ -121,7 +121,7 @@ def main():
     grammar = MyGrammar(*load_corpus())
 
     print("Running heuristic")
-    ge = PGE(grammar, popsize=100, selected=10, learning=0.05, verbose=True, timeout=10)
+    ge = PGE(grammar, popsize=100, selected=20, learning=0.01, verbose=True, timeout=10)
     ge.run(100)
 
     print(ge.pop_avg)
