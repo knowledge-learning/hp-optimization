@@ -286,13 +286,17 @@ class TassGrammar(Grammar):
             xtrain, ytrain, xdev, mapping = dataset.task_abc_by_sentence()
         else:
             xtrain, ytrain, xdev, mapping = dataset.task_abc_by_word()
-            clss = OneVsRestClassifier(clss)
             xtrain = np.vstack(xtrain)
             ytrain = np.vstack(ytrain)
 
-        clss.fit(xtrain, ytrain)
+            if isinstance(clss, Model):
+                clss.fit(xtrain, ytrain, epochs=100)
+            else:
+                clss = OneVsRestClassifier(clss)
+                clss.fit(xtrain, ytrain)
 
         predictions = [clss.predict(x) for x in xdev]
+        predictions = [(x > 0.5).astype(int) for x in xdev]
 
         # Ids
         ids = 0
@@ -490,10 +494,8 @@ class TassGrammar(Grammar):
                 xtrain = np.asarray(xtrain)
                 ytrain = np.asarray(ytrain)
 
-                clss.fit(xtrain, ytrain, epochs=10)
-
-                prediction = [clss.predict(x) for x in xdev]
-                prediction = [(x > 0.5).astype(int) for x in prediction]
+                clss.fit(xtrain, ytrain, epochs=1)
+                # clss.fit(xtrain, ytrain, epochs=10)
             else:
                 xtrain, ytrain, xdev = dataset.task_a_by_word()
                 xtrain = np.vstack(xtrain)
@@ -504,8 +506,8 @@ class TassGrammar(Grammar):
                 else:
                     clss.fit(xtrain, ytrain)
 
-                prediction = [clss.predict(x) for x in xdev]
-                prediction = [(x > 0.5).astype(int) for x in prediction]
+            prediction = [clss.predict(x) for x in xdev]
+            prediction = [(x > 0.5).astype(int) for x in prediction]
         else:
             # sequence classifier
             xtrain, ytrain, xdev = dataset.task_a_by_word()
@@ -517,6 +519,8 @@ class TassGrammar(Grammar):
         for sentence, pred in szip(dataset.dev_tokens, prediction):
             new_sentence = []
             for token, r in szip(sentence, pred):
+                if isinstance(r, np.ndarray):
+                    r = r[0]
                 ids += 1
                 new_sentence.append((token.init, token.end, r==1, ids))
             results.append(new_sentence)
@@ -554,7 +558,7 @@ class TassGrammar(Grammar):
         _, cols = dataset.vectors[0].shape
         intput_shape = cols
 
-        clss, clss_type = self._class(ind, dataset, intput_shape, 3)
+        clss, clss_type = self._class(ind, dataset, intput_shape, 1)
 
         if clss_type == 'seq':
             xtrain, ytrain, xdev = dataset.task_b_by_sentence()
@@ -562,27 +566,30 @@ class TassGrammar(Grammar):
             ytrain = np.asarray(ytrain)
 
             clss.fit(xtrain, ytrain, epochs=10)
-
-            prediction = [clss.predict(x) for x in xdev]
-            print(prediction)
-
         else:
             xtrain, ytrain, xdev = dataset.task_b_by_word()
             xtrain = np.vstack(xtrain)
             ytrain = np.hstack(ytrain)
 
-            clss.fit(xtrain, ytrain)
+            if isinstance(clss, Model):
+                clss.fit(xtrain, ytrain, epochs=100)
+            else:
+                clss.fit(xtrain, ytrain)
 
-            # construir la entrada dev
-            prediction = [clss.predict(x) for x in xdev]
+        prediction = [clss.predict(x) for x in xdev]
+        prediction = [(x > 0.5).astype(int) for x in prediction]
 
         results_B = []
+
+        ymapi = ['Action', 'Concept']
 
         for sentence, pred in szip(result_A, prediction):
             new_sentence = {}
             for (start, end, kw, ids), lbl in szip(sentence, pred):
+                if isinstance(lbl, np.ndarray):
+                    lbl = lbl[0]
                 if kw:
-                    new_sentence[(start, end)] = (ids, lbl)
+                    new_sentence[(start, end)] = (ids, ymapi[lbl])
             results_B.append(new_sentence)
 
         return results_B
@@ -592,40 +599,46 @@ class TassGrammar(Grammar):
         _, cols = dataset.vectors[0].shape
         intput_shape = cols
 
-        clss, clss_type = self._class(ind, intput_shape, 6)
+        clss, clss_type = self._class(ind, dataset, 2*intput_shape, 6)
 
         if clss_type == 'seq':
             xtrain, ytrain, xdev, mapping = dataset.task_c_by_sentence()
         else:
-            clss = OneVsRestClassifier(clss)
             xtrain, ytrain, xdev, mapping = dataset.task_c_by_word()
             xtrain = np.vstack(xtrain)
             ytrain = np.vstack(ytrain)
 
-        clss.fit(xtrain, ytrain)
+            if isinstance(clss, Model):
+                clss.fit(xtrain, ytrain, epochs=100)
+            else:
+                clss = OneVsRestClassifier(clss)
+                clss.fit(xtrain, ytrain)
+
+        predictions = [clss.predict(x) for x in xdev]
+        predictions = [(x > 0.5).astype(int) for x in xdev]
 
         # construir la entrada dev
         prediction = [clss.predict(x) for x in xdev]
         val_relations = []
 
         for lbl, resC, mapC in szip(val_labels, prediction, mapping):
-                sentence_rels = []
-                for rels, (org, dest) in szip(resC, mapC):
-                    if org not in lbl or dest not in lbl:
-                        continue
-                    orgid, orglb = lbl[org]
-                    destid, destlb = lbl[dest]
+            sentence_rels = []
+            for rels, (org, dest) in szip(resC, mapC):
+                if org not in lbl or dest not in lbl:
+                    continue
+                orgid, orglb = lbl[org]
+                destid, destlb = lbl[dest]
 
-                    rels = dataset.relmap.inverse_transform(rels.reshape(1,-1))[0]
-                    for r in rels:
-                        if r in ['subject', 'target']:
-                            if orglb == 'Action' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
-                        else:
-                            if orglb == 'Concept' and destlb == 'Concept':
-                                sentence_rels.append((r, orgid, destid))
+                rels = dataset.relmap.inverse_transform(rels.reshape(1,-1))[0]
+                for r in rels:
+                    if r in ['subject', 'target']:
+                        if orglb == 'Action' and destlb == 'Concept':
+                            sentence_rels.append((r, orgid, destid))
+                    else:
+                        if orglb == 'Concept' and destlb == 'Concept':
+                            sentence_rels.append((r, orgid, destid))
 
-                val_relations.append(sentence_rels)
+            val_relations.append(sentence_rels)
 
         return val_relations
 
@@ -961,20 +974,22 @@ class TassGrammar(Grammar):
 def main():
     grammar = TassGrammar()
 
-    for i in range(203, 100000):
+    for i in range(0, 100000):
         random.seed(i)
-        print("-------\nRandom seed %i" % i)
 
         ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
         sample = ind.sample()
 
         try:
             assert sample['Pipeline'][0]['Repr'][3]['PosPrep'][0]['StopW'] == ['no']
-            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'wordVec'
-            sample['Pipeline'][2]['B'][0]['Class'][0]['NN']
+            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
+            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
+            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+            sample['Pipeline'][3]['C'][0]['Class'][0]['NN']
         except:
             continue
 
+        print("\nRandom seed %i" % i)
         print(yaml.dump(sample))
         ind.reset()
 

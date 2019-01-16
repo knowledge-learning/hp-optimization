@@ -161,12 +161,6 @@ class TassDataset:
         xtrain = []
         ytrain = []
 
-        ymap = {
-            'Action': [1,0,0],
-            'Concept': [0,1,0],
-            '': [0,0,1]
-        }
-
         for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
             padding = self.max_length - len(sentence)
 
@@ -218,13 +212,18 @@ class TassDataset:
         xtrain = []
         ytrain = []
 
+        ymap = {
+            'Action': 0,
+            'Concept': 1,
+        }
+
         for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
             new_sent = []
             new_lbl = []
             for word, lbl in szip(sentence, labels):
                 if lbl:
                     new_sent.append(word)
-                    new_lbl.append(lbl)
+                    new_lbl.append(ymap[lbl])
             if new_sent:
                 new_sent = np.vstack(new_sent)
                 new_lbl = np.hstack(new_lbl)
@@ -243,9 +242,8 @@ class TassDataset:
         ytrain = []
 
         ymap = {
-            'Action': [1,0,0],
-            'Concept': [0,1,0],
-            '': [0,0,1]
+            'Action': 0,
+            'Concept': 1,
         }
 
         for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
