@@ -39,7 +39,7 @@ from tensorflow.keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooli
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
 from ..datasets.ehealthkd import TassDataset
 
-from ..utils import szip
+from ..utils import szip, sdiv
 
 
 class Token:
@@ -94,7 +94,7 @@ class TassGrammar(Grammar):
             'Kernel'   : 'linear | rbf | poly',
 
             # Generic neural networks
-            'NN'       : 'CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop',
+            'NN'       : 'Drop CVLayers DLayers FLayer | Drop RLayers DLayers FLayer | Drop DLayers FLayer',
             'Drop'     : 'f(0.1,0.5)',
             # Convolutional layers
             'CVLayers' : 'Count MinFilter MaxFilter FormatCon',
@@ -172,24 +172,30 @@ class TassGrammar(Grammar):
 
         self._repr(ind, dataset)
 
-        if choice == 'A B C':
-            # Ejecutar tareas A, B y C en secuencia
-            result_A = self._a(ind, dataset)
-            val_labels = self._b(ind, dataset, result_A)
-            val_relations = self._c(ind, dataset, val_labels)
-        elif choice == 'AB C':
-            # Ejecutar tareas AB juntas y C en secuencia
-            val_labels = self._ab(ind, dataset)
-            val_relations = self._c(ind, dataset, val_labels)
-        elif choice == 'A BC':
-            # Ejecutar tarea A y luego BC
-            results_A = self._a(ind, dataset)
-            val_labels, val_relations = self._bc(ind, dataset, results_A)
-        else:
-            # Ejecutar Tarea ABC junta
-            val_labels, val_relations = self._abc(ind, dataset)
+        try:
+            if choice == 'A B C':
+                # Ejecutar tareas A, B y C en secuencia
+                result_A = self._a(ind, dataset)
+                val_labels = self._b(ind, dataset, result_A)
+                val_relations = self._c(ind, dataset, val_labels)
+            elif choice == 'AB C':
+                # Ejecutar tareas AB juntas y C en secuencia
+                val_labels = self._ab(ind, dataset)
+                val_relations = self._c(ind, dataset, val_labels)
+            elif choice == 'A BC':
+                # Ejecutar tarea A y luego BC
+                results_A = self._a(ind, dataset)
+                val_labels, val_relations = self._bc(ind, dataset, results_A)
+            else:
+                # Ejecutar Tarea ABC junta
+                val_labels, val_relations = self._abc(ind, dataset)
 
-        return self._score(dataset.dev_labels, val_labels, dataset.dev_relations, val_relations)
+            return self._score(dataset.dev_labels, val_labels, dataset.dev_relations, val_relations)
+        except ValueError as e:
+            if 'must be non-negative' in str(e):
+                raise InvalidPipeline(str(e))
+            else:
+                raise e
 
     def _score(self, train_labels, val_labels, train_relations, val_relations):
         assert len(train_labels) == len(val_labels)
@@ -256,75 +262,17 @@ class TassGrammar(Grammar):
                 if (r,to,td) not in r1:
                     spuriousC += 1
 
+        print("[*] Task A: %0.2f" % sdiv(correctA, correctA + missingA + spuriousA))
+        print("[*] Task B: %0.2f" % sdiv(correctB, correctB + incorrectB))
+        print("[*] Task C: %0.2f" % sdiv(correctC, correctC + missingC + spuriousC))
+
         top = (correctA + 0.5 * partialA + correctB + correctC)
         spr = (correctA + partialA + correctB + incorrectB + spuriousA + correctC + spuriousC)
-        precision = top / spr if spr else 0
+        precision = sdiv(top, spr)
         msn = (correctA + partialA + correctB + incorrectB + missingA + correctC + missingC)
-        recall = top / msn if msn else 0
+        recall = sdiv(top, msn)
 
-        return 2 * precision * recall / (precision + recall) if (precision + recall) else 0
-
-    def _build_c_mapping_pairs(self, rep, tokens, labels, relations, mappingC, build_b=False, build_a=False):
-        # mapping de la tarea C (perdón)
-        trainCx = []
-        trainCy = []
-        valCmapping = []
-
-        label_maps = {
-            'Action': [0,1],
-            'Concept': [1,0],
-            None: [0,0]
-        }
-
-        for feats, sent, lbls, rels in szip(rep, tokens, labels, relations):
-            rel_pairs = []
-            rel_map = []
-            rel_clss = []
-            sent_mapp = []
-            for i,t1 in enumerate(sent):
-                if (t1.init, t1.end) not in lbls and not build_a:
-                    continue
-
-                for j,t2 in enumerate(sent):
-                    if (t2.init, t2.end) not in lbls and not build_a:
-                        continue
-
-                    pair_map = {}
-
-                    # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
-
-                    if build_b:
-                        lbl1e = label_maps[lbl1]
-                        lbl2e = label_maps[lbl2]
-                        lble = np.asarray(lbl1e + lbl2e)
-                        rel_clss.append(lble)
-
-                    rel_pairs.append(np.hstack((feats[i], feats[j])))
-
-                    # calculamos todas las relaciones entre id1 y id2
-                    for rel, org, dest in rels:
-                        if org == id1 and dest == id2:
-                            pair_map[rel] = True
-
-                    rel_map.append(pair_map)
-                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
-
-            valCmapping.append(sent_mapp)
-            rel_pairs = np.vstack(rel_pairs)
-            rel_map = mappingC.transform(rel_map).toarray()
-
-            if build_b:
-                rel_clss = np.vstack(rel_clss)
-
-            if build_b:
-                rel_map = np.hstack((rel_map, rel_clss))
-
-            trainCx.append(rel_pairs)
-            trainCy.append(rel_map)
-
-        return trainCx, trainCy, valCmapping
+        return sdiv(2 * precision * recall, precision + recall)
 
     def _abc(self, ind, dataset):
         # calcular la forma de la entrada
@@ -332,9 +280,9 @@ class TassGrammar(Grammar):
         intput_shape = cols
         output_shape = 10
 
-        clss = self._class(ind, intput_shape, output_shape)
+        clss, clss_type = self._class(ind, intput_shape, output_shape)
 
-        if isinstance(clss, Model):
+        if clss_type == 'seq':
             xtrain, ytrain, xdev, mapping = dataset.task_abc_by_sentence()
         else:
             xtrain, ytrain, xdev, mapping = dataset.task_abc_by_word()
@@ -410,9 +358,9 @@ class TassGrammar(Grammar):
         intput_shape = cols
         output_shape = 10
 
-        clss = self._class(ind, intput_shape, output_shape)
+        clss, clss_type = self._class(ind, intput_shape, output_shape)
 
-        if isinstance(clss, Model):
+        if clss_type == 'seq':
             xtrain, ytrain, xdev, mapping = dataset.task_bc_by_sentence()
         else:
             xtrain, ytrain, xdev, mapping = dataset.task_bc_by_word()
@@ -494,9 +442,9 @@ class TassGrammar(Grammar):
             _, cols = dataset.vectors[0].shape
             intput_shape = cols
 
-            clss = self._class(ind, intput_shape, 3)
+            clss, clss_type = self._class(ind, intput_shape, 3)
 
-            if isinstance(clss, Model):
+            if clss_type == 'seq':
                 xtrain, ytrain, xdev = dataset.task_ab_by_sentence()
             else:
                 xtrain, ytrain, xdev = dataset.task_ab_by_word()
@@ -535,19 +483,29 @@ class TassGrammar(Grammar):
             _, cols = dataset.vectors[0].shape
             intput_shape = cols
 
-            clss = self._class(ind, intput_shape, 1)
+            clss, clss_type = self._class(ind, dataset, intput_shape, 1)
 
-            if isinstance(clss, Model):
+            if clss_type == 'seq':
                 xtrain, ytrain, xdev = dataset.task_a_by_sentence()
+                xtrain = np.asarray(xtrain)
+                ytrain = np.asarray(ytrain)
+
+                clss.fit(xtrain, ytrain, epochs=10)
+
+                prediction = [clss.predict(x) for x in xdev]
+                prediction = [(x > 0.5).astype(int) for x in prediction]
             else:
                 xtrain, ytrain, xdev = dataset.task_a_by_word()
                 xtrain = np.vstack(xtrain)
                 ytrain = np.hstack(ytrain)
 
-            clss.fit(xtrain, ytrain)
+                if isinstance(clss, Model):
+                    clss.fit(xtrain, ytrain, epochs=100)
+                else:
+                    clss.fit(xtrain, ytrain)
 
-            # construir la entrada dev
-            prediction = [clss.predict(x) for x in xdev]
+                prediction = [clss.predict(x) for x in xdev]
+                prediction = [(x > 0.5).astype(int) for x in prediction]
         else:
             # sequence classifier
             xtrain, ytrain, xdev = dataset.task_a_by_word()
@@ -596,19 +554,28 @@ class TassGrammar(Grammar):
         _, cols = dataset.vectors[0].shape
         intput_shape = cols
 
-        clss = self._class(ind, intput_shape, 1)
+        clss, clss_type = self._class(ind, dataset, intput_shape, 3)
 
-        if isinstance(clss, Model):
+        if clss_type == 'seq':
             xtrain, ytrain, xdev = dataset.task_b_by_sentence()
+            xtrain = np.asarray(xtrain)
+            ytrain = np.asarray(ytrain)
+
+            clss.fit(xtrain, ytrain, epochs=10)
+
+            prediction = [clss.predict(x) for x in xdev]
+            print(prediction)
+
         else:
             xtrain, ytrain, xdev = dataset.task_b_by_word()
             xtrain = np.vstack(xtrain)
             ytrain = np.hstack(ytrain)
 
-        clss.fit(xtrain, ytrain)
+            clss.fit(xtrain, ytrain)
 
-        # construir la entrada dev
-        prediction = [clss.predict(x) for x in xdev]
+            # construir la entrada dev
+            prediction = [clss.predict(x) for x in xdev]
+
         results_B = []
 
         for sentence, pred in szip(result_A, prediction):
@@ -625,9 +592,9 @@ class TassGrammar(Grammar):
         _, cols = dataset.vectors[0].shape
         intput_shape = cols
 
-        clss = self._class(ind, intput_shape, 6)
+        clss, clss_type = self._class(ind, intput_shape, 6)
 
-        if isinstance(clss, Model):
+        if clss_type == 'seq':
             xtrain, ytrain, xdev, mapping = dataset.task_c_by_sentence()
         else:
             clss = OneVsRestClassifier(clss)
@@ -662,15 +629,7 @@ class TassGrammar(Grammar):
 
         return val_relations
 
-    def _seq(self, i):
-        if i.nextbool():
-            #crf
-            return None
-        else:
-            #hmm
-            return None
-
-    def _class(self, ind:Individual, input_shape=None, output_shape=None):
+    def _class(self, ind:Individual, dataset, input_shape=None, output_shape=None):
         #LR | nb | SVM | dt | NN
         des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
         clss = None
@@ -684,9 +643,9 @@ class TassGrammar(Grammar):
         elif des == 'dt':
             clss = DecisionTreeClassifier()
         else:
-            return self._nn(ind, input_shape, output_shape)
+            return self._nn(ind, dataset, input_shape, output_shape)
 
-        return clss
+        return clss, 'word'
 
     def _lr(self, i):
         return LogisticRegression(C=self._reg(i), penalty=self._penalty(i))
@@ -704,39 +663,52 @@ class TassGrammar(Grammar):
         #linear | rbf | poly
         return i.choose('linear', 'rbf', 'poly')
 
-    def _nn(self, i, input_size, output_size):
+    def _nn(self, i, dataset, input_size, output_size):
         try:
             # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
             model = Sequential()
-            option = i.nextint()
+            option = i.choose('conv', 'rec', 'deep')
 
-            x = Input(shape=(input_size, 50))
             dropout = self._drop(i)
+            clss_type = 'seq'
 
-            if option == 0:
+            if option == 'conv':
+                x = Input(shape=(dataset.max_length, input_size+1))
                 y = self._cvlayers(i, x, dropout)
                 y = self._dlayers(i, y, dropout)
                 y = self._flayer(i, y, output_size, dropout)
-            elif option == 1:
+            elif option == 'rec':
+                x = Input(shape=(dataset.max_length, input_size+1))
                 y = self._rlayers(i, x, dropout)
                 y = self._dlayers(i, y, dropout)
                 y = self._flayer(i, y, output_size, dropout)
             else:
+                clss_type = 'word'
+                x = Input(shape=(input_size,))
                 y = self._dlayers(i, x, dropout)
                 y = self._flayer(i, y, output_size, dropout)
 
             model = Model(inputs=x, outputs=y)
-            model.compile(optimizer='adam', loss='categorical_crossentropy')
-            return model
+
+            if output_size == 1:
+                loss = 'binary_crossentropy'
+            else:
+                loss = 'categorical_crossentropy'
+
+            model.compile(optimizer='adam', loss=loss)
+
+            return model, clss_type
         except ValueError as e:
             msg = str(e)
             if 'out of bounds' in msg:
+                raise InvalidPipeline('Bad NN architecture')
+            if 'Negative dimension' in msg:
                 raise InvalidPipeline('Bad NN architecture')
             else:
                 raise e
 
     def _drop(self, i):
-        return i.nextfloat(0.1, 0.5)
+        return i.nextfloat()
 
     def _cvlayers(self, i, model, dropout):
         # 'CVLayers' : 'Count MinFilter MaxFilter FormatCon',
@@ -824,6 +796,10 @@ class TassGrammar(Grammar):
 
     def _flayer(self, i, model, output_size, dropout):
         activation = i.choose('sigmoid', 'softmax')
+
+        if output_size == 1 and activation == 'softmax':
+            raise InvalidPipeline("Cannot use softmax with one output")
+
         z = Dense(output_size, activation=activation)(model)
         z = Dropout(dropout)(z)
         return z
@@ -985,7 +961,7 @@ class TassGrammar(Grammar):
 def main():
     grammar = TassGrammar()
 
-    for i in range(0, 100000):
+    for i in range(203, 100000):
         random.seed(i)
         print("-------\nRandom seed %i" % i)
 
@@ -993,8 +969,9 @@ def main():
         sample = ind.sample()
 
         try:
-            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['ABC'][0]['Class'][0]['LR']
+            assert sample['Pipeline'][0]['Repr'][3]['PosPrep'][0]['StopW'] == ['no']
+            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'wordVec'
+            sample['Pipeline'][2]['B'][0]['Class'][0]['NN']
         except:
             continue
 

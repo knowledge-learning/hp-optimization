@@ -82,13 +82,20 @@ class TassDataset:
         if self.vectors is None or self.tokens is None:
             raise ValueError("Preprocesing and representation is not ready yet.")
 
+        self.labels_map = self._labels_map()
+
+        for v, t, l, s in szip(self.vectors, self.tokens, self.labels_map, self.texts):
+            assert len(v) == len(t) == len(l)
+
     @property
-    @cached
-    def labels_map(self):
+    def max_length(self):
+        return max(map(lambda n: n.shape[0], self.vectors))
+
+    def _labels_map(self):
         print("(!) Computing labels mapping for dataset")
         labels_map = []
 
-        for sent, lbls in zip(self.tokens, self.labels):
+        for sent, lbls in szip(self.tokens, self.labels):
             sent_map = []
             for t in sent:
                 if (t.init, t.end) in lbls:
@@ -109,22 +116,18 @@ class TassDataset:
 
     @property
     def train_vectors(self):
-        self._check_repr()
         return self.train(self.vectors)
 
     @property
     def dev_vectors(self):
-        self._check_repr()
         return self.dev(self.vectors)
 
     @property
     def train_tokens(self):
-        self._check_repr()
         return self.train(self.tokens)
 
     @property
     def dev_tokens(self):
-        self._check_repr()
         return self.dev(self.tokens)
 
     @property
@@ -152,6 +155,63 @@ class TassDataset:
 
         return xtrain, ytrain, xdev
 
+    def task_a_by_sentence(self):
+        self._check_repr()
+
+        xtrain = []
+        ytrain = []
+
+        ymap = {
+            'Action': [1,0,0],
+            'Concept': [0,1,0],
+            '': [0,0,1]
+        }
+
+        for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
+            padding = self.max_length - len(sentence)
+
+            if padding < 0:
+                sentence = sentence[:self.max_length,:]
+                padding = None
+            else:
+                _, cols = self.vectors[0].shape
+                padding = np.zeros((padding, cols))
+                sentence = np.vstack((sentence, padding))
+
+            for i, lb in enumerate(labels):
+                col = np.zeros((self.max_length, 1))
+                col[i,0] = 1.0
+                x = np.hstack((sentence, col))
+                y = 0 if lb == '' else 1
+
+                xtrain.append(x)
+                ytrain.append(y)
+
+        xdev = []
+
+        for sentence in self.dev_vectors:
+            xdev_sent = []
+            sentence_size = len(sentence)
+            padding = self.max_length - len(sentence)
+
+            if padding < 0:
+                sentence = sentence[:self.max_length,:]
+                padding = None
+            else:
+                _, cols = self.vectors[0].shape
+                padding = np.zeros((padding, cols))
+                sentence = np.vstack((sentence, padding))
+
+            for i in range(sentence_size):
+                col = np.zeros((self.max_length, 1))
+                col[i,0] = 1.0
+                x = np.hstack((sentence, col))
+
+                xdev_sent.append(x)
+            xdev.append(np.asarray(xdev_sent))
+
+        return xtrain, ytrain, xdev
+
     def task_b_by_word(self):
         self._check_repr()
 
@@ -173,6 +233,63 @@ class TassDataset:
             ytrain.append(new_lbl)
 
         xdev = self.dev_vectors
+
+        return xtrain, ytrain, xdev
+
+    def task_b_by_sentence(self):
+        self._check_repr()
+
+        xtrain = []
+        ytrain = []
+
+        ymap = {
+            'Action': [1,0,0],
+            'Concept': [0,1,0],
+            '': [0,0,1]
+        }
+
+        for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
+            padding = self.max_length - len(sentence)
+
+            if padding < 0:
+                sentence = sentence[:self.max_length,:]
+                padding = None
+            else:
+                _, cols = self.vectors[0].shape
+                padding = np.zeros((padding, cols))
+                sentence = np.vstack((sentence, padding))
+
+            for i, lb in enumerate(labels):
+                col = np.zeros((self.max_length, 1))
+                col[i,0] = 1.0
+                x = np.hstack((sentence, col))
+                y = ymap[lbl]
+
+                xtrain.append(x)
+                ytrain.append(y)
+
+        xdev = []
+
+        for sentence in self.dev_vectors:
+            xdev_sent = []
+            sentence_size = len(sentence)
+            padding = self.max_length - len(sentence)
+
+            if padding < 0:
+                sentence = sentence[:self.max_length,:]
+                padding = None
+            else:
+                _, cols = self.vectors[0].shape
+                padding = np.zeros((padding, cols))
+                sentence = np.vstack((sentence, padding))
+
+            for i in range(sentence_size):
+                col = np.zeros((self.max_length, 1))
+                col[i,0] = 1.0
+                x = np.hstack((sentence, col))
+
+                xdev_sent.append(x)
+            xdev.append(np.asarray(xdev_sent))
 
         return xtrain, ytrain, xdev
 

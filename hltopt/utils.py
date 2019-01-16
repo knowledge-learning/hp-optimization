@@ -59,3 +59,9 @@ def szip(*items):
         raise ValueError("All collections should be the same size.")
 
     return zip(*items)
+
+def sdiv(a, b):
+    try:
+        return a / b
+    except ValueError:
+        return 0.0
