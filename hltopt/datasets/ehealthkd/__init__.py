@@ -263,7 +263,7 @@ class TassDataset:
                 col = np.zeros((self.max_length, 1))
                 col[i,0] = 1.0
                 x = np.hstack((sentence, col))
-                y = ymap[lbl]
+                y = ymap[lb]
 
                 xtrain.append(x)
                 ytrain.append(y)

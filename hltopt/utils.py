@@ -63,5 +63,5 @@ def szip(*items):
 def sdiv(a, b):
     try:
         return a / b
-    except ValueError:
+    except ZeroDivisionError:
         return 0.0
