@@ -87,9 +87,7 @@ class TassDataset:
         for v, t, l, s in szip(self.vectors, self.tokens, self.labels_map, self.texts):
             assert len(v) == len(t) == len(l)
 
-    @property
-    def max_length(self):
-        return max(map(lambda n: n.shape[0], self.vectors))
+        self.max_length = max(map(lambda n: n.shape[0], self.vectors))
 
     def _labels_map(self):
         print("(!) Computing labels mapping for dataset")
@@ -340,6 +338,94 @@ class TassDataset:
 
         return xtrain, ytrain, xdev, mapping
 
+    def task_c_by_sentence(self):
+        self._check_repr()
+
+        xtrain = []
+        ytrain = []
+
+        for feats, sent, lbls, rels in szip(self.train_vectors, self.train_tokens, self.train_labels, self.train_relations):
+            sent_mapp = []
+            for i,t1 in enumerate(sent):
+                if (t1.init, t1.end) not in lbls:
+                    continue
+
+                for j,t2 in enumerate(sent):
+                    if (t2.init, t2.end) not in lbls:
+                        continue
+
+                    pair_map = {}
+
+                    xmatrix = feats
+
+                    # id1, id2 son los id de 2 tokens
+                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
+                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
+
+                    rows, cols = xmatrix.shape
+                    padding = self.max_length - rows
+
+                    if padding:
+                        xmatrix = np.vstack((xmatrix, np.zeros((padding, cols))))
+
+                    indicators = np.zeros((self.max_length, 2))
+                    indicators[i:-2] = 1
+                    indicators[j:-1] = 1
+
+                    xmatrix = np.hstack((xmatrix, indicators))
+
+                    xtrain.append(xmatrix)
+
+                    # calculamos todas las relaciones entre id1 y id2
+                    for rel, org, dest in rels:
+                        if org == id1 and dest == id2:
+                            pair_map[rel] = True
+
+                    ytrain.append(self.relmap.transform([pair_map]).reshape(1,-1).toarray())
+
+        xdev = []
+        mapping = []
+
+        for feats, sent, lbls, rels in szip(self.dev_vectors, self.dev_tokens, self.dev_labels, self.dev_relations):
+            sent_mapp = []
+            xdev_sent = []
+            for i,t1 in enumerate(sent):
+                if (t1.init, t1.end) not in lbls:
+                    continue
+
+                for j,t2 in enumerate(sent):
+                    if (t2.init, t2.end) not in lbls:
+                        continue
+
+                    pair_map = {}
+
+                    xmatrix = feats
+
+                    # id1, id2 son los id de 2 tokens
+                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
+                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
+
+                    rows, cols = xmatrix.shape
+                    padding = self.max_length - rows
+
+                    if padding:
+                        xmatrix = np.vstack((xmatrix, np.zeros((padding, cols))))
+
+                    indicators = np.zeros((self.max_length, 2))
+                    indicators[i:-2] = 1
+                    indicators[j:-1] = 1
+
+                    xmatrix = np.hstack((xmatrix, indicators))
+
+                    xdev_sent.append(xmatrix)
+                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
+
+            xdev_sent = np.asarray(xdev_sent)
+            xdev.append(xdev_sent)
+            mapping.append(sent_mapp)
+
+        return xtrain, ytrain, xdev, mapping
+
     def task_ab_by_word(self):
         self._check_repr()
 
@@ -474,3 +560,14 @@ class TassDataset:
         mapping = self.dev(mapping)
 
         return xtrain, ytrain, xdev, mapping
+
+
+class Example:
+    def __init__(self, features, value):
+        self.features = features
+        self.value = value
+
+
+class Sentence:
+    def __init__(self, examples):
+        self.examples = examples

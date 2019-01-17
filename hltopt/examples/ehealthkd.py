@@ -118,7 +118,7 @@ class TassGrammar(Grammar):
             # las capas van creciendo de tamaño del min al max, disminuyendo del max al min, todas del mismo tamaño
             'FormatDen': 'grow | shrink | same',
             # Final layer
-            'FLayer'   : 'sigmoid | softmax',
+            'FLayer'   : 'sigmoid',
 
             # Text representation
             'Repr'     : 'Token Prep SemFeat PosPrep MulWords Embed',
@@ -485,29 +485,27 @@ class TassGrammar(Grammar):
 
             # calcular la forma de la entrada
             _, cols = dataset.vectors[0].shape
-            intput_shape = cols
 
-            clss, clss_type = self._class(ind, dataset, intput_shape, 1)
+            clss, clss_type = self._class(ind, dataset, cols, cols+1, 1)
 
             if clss_type == 'seq':
                 xtrain, ytrain, xdev = dataset.task_a_by_sentence()
                 xtrain = np.asarray(xtrain)
                 ytrain = np.asarray(ytrain)
 
-                clss.fit(xtrain, ytrain, epochs=1)
-                # clss.fit(xtrain, ytrain, epochs=10)
+                clss.fit(xtrain, ytrain, epochs=10, validation_split=0.1)
             else:
                 xtrain, ytrain, xdev = dataset.task_a_by_word()
                 xtrain = np.vstack(xtrain)
                 ytrain = np.hstack(ytrain)
 
                 if isinstance(clss, Model):
-                    clss.fit(xtrain, ytrain, epochs=100)
+                    clss.fit(xtrain, ytrain, epochs=100, validation_split=0.1)
                 else:
                     clss.fit(xtrain, ytrain)
 
             prediction = [clss.predict(x) for x in xdev]
-            prediction = [(x > 0.5).astype(int) for x in prediction]
+            prediction = [(x > 0.5).astype(int).reshape(-1) for x in prediction]
         else:
             # sequence classifier
             xtrain, ytrain, xdev = dataset.task_a_by_word()
@@ -519,8 +517,6 @@ class TassGrammar(Grammar):
         for sentence, pred in szip(dataset.dev_tokens, prediction):
             new_sentence = []
             for token, r in szip(sentence, pred):
-                if isinstance(r, np.ndarray):
-                    r = r[0]
                 ids += 1
                 new_sentence.append((token.init, token.end, r==1, ids))
             results.append(new_sentence)
@@ -556,28 +552,27 @@ class TassGrammar(Grammar):
     def _b(self, ind:Individual, dataset:TassDataset, result_A):
         # compute input shape (for neural networks)
         _, cols = dataset.vectors[0].shape
-        intput_shape = cols
 
-        clss, clss_type = self._class(ind, dataset, intput_shape, 1)
+        clss, clss_type = self._class(ind, dataset, cols, cols+1, 1)
 
         if clss_type == 'seq':
             xtrain, ytrain, xdev = dataset.task_b_by_sentence()
             xtrain = np.asarray(xtrain)
             ytrain = np.asarray(ytrain)
 
-            clss.fit(xtrain, ytrain, epochs=10)
+            clss.fit(xtrain, ytrain, epochs=10, validation_split=0.1)
         else:
             xtrain, ytrain, xdev = dataset.task_b_by_word()
             xtrain = np.vstack(xtrain)
             ytrain = np.hstack(ytrain)
 
             if isinstance(clss, Model):
-                clss.fit(xtrain, ytrain, epochs=100)
+                clss.fit(xtrain, ytrain, epochs=100, validation_split=0.1)
             else:
                 clss.fit(xtrain, ytrain)
 
         prediction = [clss.predict(x) for x in xdev]
-        prediction = [(x > 0.5).astype(int) for x in prediction]
+        prediction = [(x > 0.5).astype(int).reshape(-1) for x in prediction]
 
         results_B = []
 
@@ -586,8 +581,6 @@ class TassGrammar(Grammar):
         for sentence, pred in szip(result_A, prediction):
             new_sentence = {}
             for (start, end, kw, ids), lbl in szip(sentence, pred):
-                if isinstance(lbl, np.ndarray):
-                    lbl = lbl[0]
                 if kw:
                     new_sentence[(start, end)] = (ids, ymapi[lbl])
             results_B.append(new_sentence)
@@ -597,19 +590,22 @@ class TassGrammar(Grammar):
     def _c(self, ind:Individual, dataset, val_labels):
         # compute input shape (for neural networks)
         _, cols = dataset.vectors[0].shape
-        intput_shape = cols
 
-        clss, clss_type = self._class(ind, dataset, 2*intput_shape, 6)
+        clss, clss_type = self._class(ind, dataset, 2*cols, cols+2, 6)
 
         if clss_type == 'seq':
             xtrain, ytrain, xdev, mapping = dataset.task_c_by_sentence()
+            xtrain = np.asarray(xtrain)
+            ytrain = np.vstack(ytrain)
+
+            clss.fit(xtrain, ytrain, epochs=10, validation_split=0.1)
         else:
             xtrain, ytrain, xdev, mapping = dataset.task_c_by_word()
             xtrain = np.vstack(xtrain)
             ytrain = np.vstack(ytrain)
 
             if isinstance(clss, Model):
-                clss.fit(xtrain, ytrain, epochs=100)
+                clss.fit(xtrain, ytrain, epochs=100, validation_split=0.1)
             else:
                 clss = OneVsRestClassifier(clss)
                 clss.fit(xtrain, ytrain)
@@ -617,11 +613,12 @@ class TassGrammar(Grammar):
         predictions = [clss.predict(x) for x in xdev]
         predictions = [(x > 0.5).astype(int) for x in xdev]
 
+        print(predictions)
+
         # construir la entrada dev
-        prediction = [clss.predict(x) for x in xdev]
         val_relations = []
 
-        for lbl, resC, mapC in szip(val_labels, prediction, mapping):
+        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
             sentence_rels = []
             for rels, (org, dest) in szip(resC, mapC):
                 if org not in lbl or dest not in lbl:
@@ -629,6 +626,7 @@ class TassGrammar(Grammar):
                 orgid, orglb = lbl[org]
                 destid, destlb = lbl[dest]
 
+                print(rels)
                 rels = dataset.relmap.inverse_transform(rels.reshape(1,-1))[0]
                 for r in rels:
                     if r in ['subject', 'target']:
@@ -642,7 +640,7 @@ class TassGrammar(Grammar):
 
         return val_relations
 
-    def _class(self, ind:Individual, dataset, input_shape=None, output_shape=None):
+    def _class(self, ind:Individual, dataset, word_input_size=None, seq_input_size=None, output_shape_size=None):
         #LR | nb | SVM | dt | NN
         des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
         clss = None
@@ -656,7 +654,7 @@ class TassGrammar(Grammar):
         elif des == 'dt':
             clss = DecisionTreeClassifier()
         else:
-            return self._nn(ind, dataset, input_shape, output_shape)
+            return self._nn(ind, dataset, word_input_size, seq_input_size, output_shape_size)
 
         return clss, 'word'
 
@@ -676,7 +674,7 @@ class TassGrammar(Grammar):
         #linear | rbf | poly
         return i.choose('linear', 'rbf', 'poly')
 
-    def _nn(self, i, dataset, input_size, output_size):
+    def _nn(self, i, dataset, word_input_size, seq_input_size, output_size):
         try:
             # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
             model = Sequential()
@@ -686,28 +684,24 @@ class TassGrammar(Grammar):
             clss_type = 'seq'
 
             if option == 'conv':
-                x = Input(shape=(dataset.max_length, input_size+1))
+                x = Input(shape=(dataset.max_length, seq_input_size))
                 y = self._cvlayers(i, x, dropout)
                 y = self._dlayers(i, y, dropout)
                 y = self._flayer(i, y, output_size, dropout)
             elif option == 'rec':
-                x = Input(shape=(dataset.max_length, input_size+1))
+                x = Input(shape=(dataset.max_length, seq_input_size))
                 y = self._rlayers(i, x, dropout)
                 y = self._dlayers(i, y, dropout)
                 y = self._flayer(i, y, output_size, dropout)
             else:
                 clss_type = 'word'
-                x = Input(shape=(input_size,))
+                x = Input(shape=(word_input_size,))
                 y = self._dlayers(i, x, dropout)
                 y = self._flayer(i, y, output_size, dropout)
 
             model = Model(inputs=x, outputs=y)
 
-            if output_size == 1:
-                loss = 'binary_crossentropy'
-            else:
-                loss = 'categorical_crossentropy'
-
+            loss = 'binary_crossentropy'
             model.compile(optimizer='adam', loss=loss)
 
             return model, clss_type
@@ -808,11 +802,7 @@ class TassGrammar(Grammar):
         return i.nextint()
 
     def _flayer(self, i, model, output_size, dropout):
-        activation = i.choose('sigmoid', 'softmax')
-
-        if output_size == 1 and activation == 'softmax':
-            raise InvalidPipeline("Cannot use softmax with one output")
-
+        activation = 'sigmoid'
         z = Dense(output_size, activation=activation)(model)
         z = Dropout(dropout)(z)
         return z
@@ -983,8 +973,8 @@ def main():
         try:
             assert sample['Pipeline'][0]['Repr'][3]['PosPrep'][0]['StopW'] == ['no']
             assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
-            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+            sample['Pipeline'][1]['A'][0]['Class'][0]['NN']
+            sample['Pipeline'][2]['B'][0]['Class'][0]['NN']
             sample['Pipeline'][3]['C'][0]['Class'][0]['NN']
         except:
             continue

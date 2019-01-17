@@ -53,10 +53,11 @@ class InvalidPipeline(ValueError):
 
 
 def szip(*items):
-    sizes = set(len(i) for i in items)
+    sizes = [len(i) for i in items]
+    all_sizes = len(set(sizes)) == 1
 
-    if len(sizes) != 1:
-        raise ValueError("All collections should be the same size.")
+    if not all_sizes:
+        raise ValueError("All collections should be the same size (%s)." % str(sizes))
 
     return zip(*items)
 
