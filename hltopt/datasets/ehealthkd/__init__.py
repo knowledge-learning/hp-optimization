@@ -21,13 +21,18 @@ def cached(func):
 
 class TassDataset:
     def __init__(self):
-        self.texts = []
-        self.labels = []
-        self.relations = []
+        self.sentences = []
         self.validation_size = 0
-        self.vectors = []
-        self.tokens = []
-        self.relmap = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
+
+        # self.texts = []
+        # self.labels = []
+        # self.relations = []
+        # self.vectors = []
+        # self.tokens = []
+        # self.relmap = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
+
+    def __len__(self):
+        return len(self.sentences)
 
     def load(self, finput:Path):
         goldA = finput.parent / ('output_A_' + finput.name[6:])
@@ -37,9 +42,7 @@ class TassDataset:
         text = finput.open().read()
         sentences = [s for s in text.split('\n') if s]
 
-        self.texts.extend(sentences)
         self._parse_ann(sentences, goldA, goldB, goldC)
-
         return len(sentences)
 
     def _parse_ann(self, sentences, goldA, goldB, goldC):
@@ -48,35 +51,40 @@ class TassDataset:
         for i in range(1,len(sentences_length)):
             sentences_length[i] += (sentences_length[i-1] + 1)
 
-        labelsA_doc = [{} for _ in sentences]
-        relations_doc = [[] for _ in sentences]
-        labelsB = {}
-        sent_map = {}
+        sentences_obj = [Sentence(text) for text in sentences]
+        labels_by_id = {}
+        sentence_by_id = {}
 
         for line in goldB.open():
             lid, lbl = line.split()
-            labelsB[int(lid)] = lbl
+            labels_by_id[int(lid)] = lbl
 
         for line in goldA.open():
             lid, start, end = (int(i) for i in line.split())
 
             # find the sentence where this annotation is
             i = bisect.bisect(sentences_length, start)
+            # correct the annotation spans
             if i > 0:
                 start -= sentences_length[i-1] + 1
                 end -= sentences_length[i-1] + 1
-            labelsA_doc[i][(start,end)] = (lid, labelsB[lid])
-            sent_map[lid] = i
+
+            # store the annotation in the corresponding sentence
+            the_sentence = sentences_obj[i]
+            the_sentence.keyphrases.append(Keyphrase(the_sentence, None, labels_by_id[lid], lid, start, end))
+            sentence_by_id[lid] = the_sentence
 
         for line in goldC.open():
             rel, org, dest = line.split()
             org, dest = int(org), int(dest)
-            sent = sent_map[org]
-            assert sent == sent_map[dest]
-            relations_doc[sent].append((rel, org, dest))
 
-        self.labels.extend(labelsA_doc)
-        self.relations.extend(relations_doc)
+            # find the sentence this relation belongs ti
+            the_sentence = sentence_by_id[org]
+            assert the_sentence == sentence_by_id[dest]
+            # and store it
+            the_sentence.relations.append(Relation(the_sentence, org, dest, rel))
+
+        self.sentences.extend(sentences_obj)
 
     def _check_repr(self):
         if self.vectors is None or self.tokens is None:
@@ -562,12 +570,75 @@ class TassDataset:
         return xtrain, ytrain, xdev, mapping
 
 
-class Example:
-    def __init__(self, features, value):
+class Keyphrase:
+    def __init__(self, sentence, features, label, id, start, end):
+        self.sentence = sentence
         self.features = features
-        self.value = value
+        self.label = label
+        self.id = id
+        self.start = start
+        self.end = end
+
+    @property
+    def text(self) -> str:
+        return self.sentence.text[self.start:self.end]
+
+    def __repr__(self):
+        return "Keyphrase(text=%r, label=%r)" % (self.text, self.label)
+
+
+class Relation:
+    def __init__(self, sentence, origin, destination, label):
+        self.sentence = sentence
+        self.origin = origin
+        self.destination = destination
+        self.label = label
+
+    @property
+    def from_phrase(self) -> Keyphrase:
+        return self.sentence.find_keyphrase(id=self.origin)
+
+    @property
+    def to_phrase(self) -> Keyphrase:
+        return self.sentence.find_keyphrase(id=self.destination)
+
+    def __repr__(self):
+        return "Relation(from=%r, to=%r, label=%r)" % (self.from_phrase.text, self.to_phrase.text, self.label)
 
 
 class Sentence:
-    def __init__(self, examples):
-        self.examples = examples
+    def __init__(self, text:str):
+        self.text = text
+        self.keyphrases = []
+        self.relations = []
+
+    def find_keyphrase(self, id=None, start=None, end=None) -> Keyphrase:
+        if id is not None:
+            return self._find_keyphrase_by_id(id)
+        return self._find_keyphrase_by_spans(start, end)
+
+    def find_relations(self, orig, dest):
+        results = []
+
+        for r in self.relations:
+            if r.orig == orig and r.destination == dest:
+                results.append(r)
+
+        return results
+
+    def _find_keyphrase_by_id(self, id):
+        for k in self.keyphrases:
+            if k.id == id:
+                return k
+
+        return None
+
+    def _find_keyphrase_by_spans(self, start, end):
+        for k in self.keyphrases:
+            if k.start == start and k.end == end:
+                return k
+
+        return None
+
+    def __repr__(self):
+        return "Sentence(text=%r, keyphrases=%r, relations=%r)" % (self.text, self.keyphrases, self.relations)

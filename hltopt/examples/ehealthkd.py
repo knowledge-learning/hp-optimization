@@ -151,11 +151,11 @@ class TassGrammar(Grammar):
             if file.name.startswith('input'):
                 dataset.load(file)
 
-                if FAST and len(dataset.texts) >= 100:
+                if FAST and len(dataset) >= 100:
                     break
 
         if FAST:
-            dataset.validation_size = int(0.2 * len(dataset.texts))
+            dataset.validation_size = int(0.2 * len(dataset))
         else:
             validation = dataset_path / 'develop' / 'input_develop.txt'
             dataset.validation_size = dataset.load(validation)
