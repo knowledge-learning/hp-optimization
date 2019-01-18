@@ -13,6 +13,7 @@ import unicodedata
 import gensim
 import yaml
 import numpy as np
+import warnings
 
 from scipy import sparse as sp
 from pathlib import Path
@@ -37,7 +38,7 @@ from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
 
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
-from ..datasets.ehealthkd import TassDataset
+from ..datasets.ehealthkd import TassDataset, Keyphrase, Relation
 
 from ..utils import szip, sdiv
 
@@ -164,31 +165,32 @@ class TassGrammar(Grammar):
                 test = dataset_path / 'test' / 'input_scenario1.txt'
                 dataset.validation_size = dataset.load(test)
 
-        return self._pipeline(ind, dataset)
+        return self._pipeline(ind, dataset.clone())
 
     def _pipeline(self, ind, dataset):
         # 'Pipeline' : 'Repr A B C | Repr AB C |  Repr A BC | Repr ABC',
         choice = ind.choose('A B C', 'AB C', 'A BC', 'ABC')
 
-        self._repr(ind, dataset)
+        dataset = self._repr(ind, dataset)
+        train, dev = dataset.split()
 
         try:
             if choice == 'A B C':
                 # Ejecutar tareas A, B y C en secuencia
-                result_A = self._a(ind, dataset)
-                val_labels = self._b(ind, dataset, result_A)
-                val_relations = self._c(ind, dataset, val_labels)
+                result_A = self._a(ind, train, dev)
+                val_labels = self._b(ind, train, dev, result_A)
+                val_relations = self._c(ind, train, dev, val_labels)
             elif choice == 'AB C':
                 # Ejecutar tareas AB juntas y C en secuencia
-                val_labels = self._ab(ind, dataset)
-                val_relations = self._c(ind, dataset, val_labels)
+                val_labels = self._ab(ind, train, dev)
+                val_relations = self._c(ind, train, dev, val_labels)
             elif choice == 'A BC':
                 # Ejecutar tarea A y luego BC
-                results_A = self._a(ind, dataset)
-                val_labels, val_relations = self._bc(ind, dataset, results_A)
+                results_A = self._a(ind, train, dev)
+                val_labels, val_relations = self._bc(ind, train, dev, results_A)
             else:
                 # Ejecutar Tarea ABC junta
-                val_labels, val_relations = self._abc(ind, dataset)
+                val_labels, val_relations = self._abc(ind, train, dev)
 
             return self._score(dataset.dev_labels, val_labels, dataset.dev_relations, val_relations)
         except ValueError as e:
@@ -477,14 +479,14 @@ class TassGrammar(Grammar):
 
         return val_labels
 
-    def _a(self, ind:Individual, dataset:TassDataset):
+    def _a(self, ind:Individual, train:TassDataset, dev:TassDataset):
         choice = ind.choose('class', 'seq')
 
         if choice == 'class':
             # classifier
 
             # calcular la forma de la entrada
-            _, cols = dataset.vectors[0].shape
+            cols = train.feature_size
 
             clss, clss_type = self._class(ind, dataset, cols, cols+1, 1)
 
@@ -807,91 +809,116 @@ class TassGrammar(Grammar):
         z = Dropout(dropout)(z)
         return z
 
-    def _repr(self, i, dataset):
+    def _repr(self, i, dataset:TassDataset):
         # 'Prep Token SemFeat PosPrep MulWords Embed',
-        texts = dataset.texts
-        texts = self._prep(i, texts)
-        tokens = self._token(i, texts)
-        tokens = self._semfeat(i, tokens)
-        tokens = self._posprep(i, tokens)
-        tokens = self._mulwords(i, tokens)
-        vectors = self._embed(i, tokens)
+        dataset = self._prep(i, dataset)
+        dataset = self._token(i, dataset)
+        dataset = self._semfeat(i, dataset)
+        dataset = self._posprep(i, dataset)
+        dataset = self._mulwords(i, dataset)
+        dataset = self._embed(i, dataset)
 
-        dataset.vectors = vectors
-        dataset.tokens = tokens
+        return dataset
 
-        return vectors, tokens
-
-    def _prep(self, i, texts):
+    def _prep(self, i, dataset:TassDataset):
         #'DelPunt StripAcc'
-        met = self._delpunt(i, texts)
-        return self._stripacc(i, met)
+        dataset = self._delpunt(i, dataset)
+        return self._stripacc(i, dataset)
 
-    def _delpunt(self, i, texts):
+    def _delpunt(self, i, dataset:TassDataset):
         #yes | no
         if i.nextbool():
-            return [t.translate({c:" " for c in string.punctuation}) for t in texts]
-        else:
-            return texts
+            for sentence in dataset.sentences:
+                sentence.text = sentence.text.translate({c:" " for c in string.punctuation})
 
-    def _stripacc(self, i, texts):
+        return dataset
+
+    def _stripacc(self, i, dataset:TassDataset):
         #yes | no
         if i.nextbool():
-            return [gensim.utils.deaccent(t) for t in texts]
-        else:
-            return texts
+            for sentence in dataset.sentences:
+                sentence.text = gensim.utils.deaccent(sentence.text)
 
-    def _token(self, i, texts):
-        return [[Token(w.text, w.idx, w.norm_, w.pos_, w.tag_, w.dep_, w.vector) for w in self.spacy_nlp(t)] for t in texts]
+        return dataset
 
-    def _posprep(self, i, tokens):
-        tokens = self._stem(i, tokens)
-        return self._stopw(i, tokens)
+    def _token(self, i, dataset:TassDataset):
+        ids = 0
 
-    def _stem(self, i, tokens):
+        for sentence in dataset.sentences:
+            for token in self.spacy_nlp(sentence.text):
+                features = dict(
+                    norm=token.norm_,
+                    pos=token.pos_,
+                    tag=token.tag_,
+                    dep=token.dep_,
+                    vector=token.vector
+                )
+                start = token.idx
+                end = start + len(token.text)
+                match = sentence.find_keyphrase(start=start, end=end)
+                label = match.label if match else ''
+                keyword = Keyphrase(sentence, features, label, ids, start, end)
+                ids += 1
+
+                sentence.tokens.append(keyword)
+
+        return dataset
+
+    def _posprep(self, i, dataset):
+        self._stopw(i, dataset)
+        self._stem(i, dataset)
+
+        return dataset
+
+    def _stem(self, i, dataset:TassDataset):
         if i.nextbool():
-            for tok in tokens:
-                for t in tok:
-                    t.norm = self.stemmer.stem(t.norm)
+            for sentence in dataset.sentences:
+                for token in sentence.tokens:
+                    token.features['norm'] = self.stemmer.stem(token.features['norm'])
 
-        return tokens
-
-    def _stopw(self, i, tokens):
+    def _stopw(self, i, dataset:TassDataset):
         if i.nextbool():
             sw = set(stopwords.words('spanish'))
         else:
             sw = set()
 
-        return [[t for t in tok if not t.norm in sw] for tok in tokens]
+        for sentence in dataset.sentences:
+            sentence.tokens = [t for t in sentence.tokens if t.features['norm'] not in sw]
 
-    def _semfeat(self, i, tokens):
+    def _semfeat(self, i, dataset:TassDataset):
         # incluir pos-tag?
         if not i.nextbool():
-            for tok in tokens:
-                for t in tok:
-                    del t.pos
-                    del t.tag
+            for sentence in dataset.sentences:
+                for token in sentence.tokens:
+                    token.features.pop('pos')
+                    token.features.pop('tag')
 
         # incluir dependencias
         if not i.nextbool():
-            for tok in tokens:
-                for t in tok:
-                    del t.dep
+            for sentence in dataset.sentences:
+                for token in sentence.tokens:
+                    token.features.pop('dep')
 
-        self._umls(i, tokens)
-        self._snomed(i, tokens)
+        self._umls(i, dataset)
+        self._snomed(i, dataset)
 
-        return tokens
+        return dataset
 
-    def _umls(self, i, tokens):
+    def _umls(self, i, dataset:TassDataset):
+        warnings.warn("UMLS not implemented yet")
+
         if i.nextbool():
-            return ""
+            return True
 
-    def _snomed(self, i, tokens):
+    def _snomed(self, i, dataset:TassDataset):
+        warnings.warn("SNOMED not implemented yet")
+
         if i.nextbool():
-            return ""
+            return True
 
     def _mulwords(self, i, tokens):
+        warnings.warn("MultiWords not implemented yet")
+
         #'MulWords' : 'countPhrase | freeling | Ngram',
         choice = i.choose('countPhrase', 'freeling', 'Ngram')
 
@@ -900,66 +927,41 @@ class TassGrammar(Grammar):
 
         return tokens
 
-    def _ngram(self, i, tokens):
-        #i(2,4)
-        n = i.nextint() + 2
-        result = tokens
-        for i in range(1, n+1):
-            result += list(nltk.ngrams(tokens, i))
-        return result
-
-    def _embed(self, i, tokens):
+    def _embed(self, i, dataset:TassDataset):
         # 'Embed' : 'wordVec | onehot | none',
         choice = i.choose('wv', 'onehot', 'none')
 
-        # los objetos a codificar
-        objs = [[dict(t.__dict__) for t in tok] for tok in tokens]
-        # eliminar las propiedades inútiles
-        for tok in objs:
-            for t in tok:
-                t.pop('init')
-                t.pop('end')
-                t.pop('text')
+        # train the dict-vectorizer in the relevant features
+        feature_dicts = [dict(token.features) for sentence in dataset.sentences for token in sentence.tokens]
 
-        if choice == 'wv':
-            # eliminar el texto y codificar normal
-            for tok in objs:
-                for t in tok:
-                    t.pop('norm')
-                    t.pop('vector')
-
-            vectors = self._dictvect(objs)
-
-            matrices = []
-
-            for tok,vec in szip(tokens, vectors):
-                tok_matrix = np.vstack([t.vector for t in tok])
-                matrices.append(np.hstack((tok_matrix, vec)))
-
-            return matrices
-
+        if choice == 'wv' or choice == 'none':
+            # remove text *and* vector
+            for d in feature_dicts:
+                d.pop('vector')
+                d.pop('norm')
         elif choice == 'onehot':
-            # eliminar el vector y codificar onehot
-            for tok in objs:
-                for t in tok:
-                    t.pop('vector')
+            # remove only vector
+            for d in feature_dicts:
+                d.pop('vector')
 
-            return self._dictvect(objs)
+        vectorizer = DictVectorizer().fit(feature_dicts)
 
-        else:
-            # eliminar texto y vector y codificar normal
-            for tok in objs:
-                for t in tok:
-                    del t['norm']
-                    del t['vector']
+        # now we vectorize
+        for sentence in dataset.sentences:
+            for token in sentence.tokens:
+                # save the vw vector for later
 
-            return self._dictvect(objs)
+                vector = token.features['vector']
+                features = vectorizer.transform([token.features]).toarray().flatten()
 
-    def _dictvect(self, objs):
-        dv = DictVectorizer()
-        dv.fit(t for sent in objs for t in sent)
-        return [dv.transform(sent).toarray() for sent in objs]
-#
+                # now maybe reuse that wv
+                if choice == 'wv':
+                    features = np.hstack((vector, features))
+
+                token.features = features
+
+        return dataset
+
 
 def main():
     grammar = TassGrammar()
@@ -971,11 +973,10 @@ def main():
         sample = ind.sample()
 
         try:
-            assert sample['Pipeline'][0]['Repr'][3]['PosPrep'][0]['StopW'] == ['no']
             assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['A'][0]['Class'][0]['NN']
-            sample['Pipeline'][2]['B'][0]['Class'][0]['NN']
-            sample['Pipeline'][3]['C'][0]['Class'][0]['NN']
+            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
+            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
         except:
             continue
 

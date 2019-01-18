@@ -20,8 +20,8 @@ def cached(func):
 
 
 class TassDataset:
-    def __init__(self):
-        self.sentences = []
+    def __init__(self, sentences=None, validation_size=0):
+        self.sentences = sentences or []
         self.validation_size = 0
 
         # self.texts = []
@@ -30,6 +30,9 @@ class TassDataset:
         # self.vectors = []
         # self.tokens = []
         # self.relmap = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
+
+    def clone(self):
+        return TassDataset([s.clone() for s in self.sentences], self.validation_size)
 
     def __len__(self):
         return len(self.sentences)
@@ -86,71 +89,74 @@ class TassDataset:
 
         self.sentences.extend(sentences_obj)
 
-    def _check_repr(self):
-        if self.vectors is None or self.tokens is None:
-            raise ValueError("Preprocesing and representation is not ready yet.")
-
-        self.labels_map = self._labels_map()
-
-        for v, t, l, s in szip(self.vectors, self.tokens, self.labels_map, self.texts):
-            assert len(v) == len(t) == len(l)
-
-        self.max_length = max(map(lambda n: n.shape[0], self.vectors))
-
-    def _labels_map(self):
-        print("(!) Computing labels mapping for dataset")
-        labels_map = []
-
-        for sent, lbls in szip(self.tokens, self.labels):
-            sent_map = []
-            for t in sent:
-                if (t.init, t.end) in lbls:
-                    lbl = lbls[(t.init, t.end)][1]
-                    sent_map.append(lbl)
-                else:
-                    sent_map.append('')
-
-            labels_map.append(sent_map)
-
-        return labels_map
-
-    def train(self, x):
-        return x[:-self.validation_size]
-
-    def dev(self, x):
-        return x[-self.validation_size:]
-
     @property
-    def train_vectors(self):
-        return self.train(self.vectors)
+    def feature_size(self):
+        return self.sentences[0].tokens[0].features.shape[0]
 
-    @property
-    def dev_vectors(self):
-        return self.dev(self.vectors)
+    # def _check_repr(self):
+    #     if self.vectors is None or self.tokens is None:
+    #         raise ValueError("Preprocesing and representation is not ready yet.")
 
-    @property
-    def train_tokens(self):
-        return self.train(self.tokens)
+    #     self.labels_map = self._labels_map()
 
-    @property
-    def dev_tokens(self):
-        return self.dev(self.tokens)
+    #     for v, t, l, s in szip(self.vectors, self.tokens, self.labels_map, self.texts):
+    #         assert len(v) == len(t) == len(l)
 
-    @property
-    def train_labels(self):
-        return self.train(self.labels)
+    #     self.max_length = max(map(lambda n: n.shape[0], self.vectors))
 
-    @property
-    def train_relations(self):
-        return self.train(self.relations)
+    # def _labels_map(self):
+    #     print("(!) Computing labels mapping for dataset")
+    #     labels_map = []
 
-    @property
-    def dev_labels(self):
-        return self.dev(self.labels)
+    #     for sent, lbls in szip(self.tokens, self.labels):
+    #         sent_map = []
+    #         for t in sent:
+    #             if (t.init, t.end) in lbls:
+    #                 lbl = lbls[(t.init, t.end)][1]
+    #                 sent_map.append(lbl)
+    #             else:
+    #                 sent_map.append('')
 
-    @property
-    def dev_relations(self):
-        return self.dev(self.relations)
+    #         labels_map.append(sent_map)
+
+    #     return labels_map
+
+    def split(self):
+        train = TassDataset(self.sentences[:-self.validation_size])
+        dev = TassDataset(self.sentences[-self.validation_size:])
+        return train, dev
+
+    # @property
+    # def train_vectors(self):
+    #     return self.train(self.vectors)
+
+    # @property
+    # def dev_vectors(self):
+    #     return self.dev(self.vectors)
+
+    # @property
+    # def train_tokens(self):
+    #     return self.train(self.tokens)
+
+    # @property
+    # def dev_tokens(self):
+    #     return self.dev(self.tokens)
+
+    # @property
+    # def train_labels(self):
+    #     return self.train(self.labels)
+
+    # @property
+    # def train_relations(self):
+    #     return self.train(self.relations)
+
+    # @property
+    # def dev_labels(self):
+    #     return self.dev(self.labels)
+
+    # @property
+    # def dev_relations(self):
+    #     return self.dev(self.relations)
 
     def task_a_by_word(self):
         self._check_repr()
@@ -579,6 +585,9 @@ class Keyphrase:
         self.start = start
         self.end = end
 
+    def clone(self, sentence):
+        return Keyphrase(sentence, self.features, self.label, self.id, self.start, self.end)
+
     @property
     def text(self) -> str:
         return self.sentence.text[self.start:self.end]
@@ -593,6 +602,9 @@ class Relation:
         self.origin = origin
         self.destination = destination
         self.label = label
+
+    def clone(self, sentence):
+        return Relation(sentence, self.origin, self.destination, self.label)
 
     @property
     def from_phrase(self) -> Keyphrase:
@@ -611,6 +623,14 @@ class Sentence:
         self.text = text
         self.keyphrases = []
         self.relations = []
+        self.tokens = []
+
+    def clone(self):
+        s = Sentence(self.text)
+        s.keyphrases = [k.clone(s) for k in self.keyphrases]
+        s.relations = [r.clone(s) for r in self.relations]
+        s.tokens = [k.clone(s) for k in self.tokens]
+        return s
 
     def find_keyphrase(self, id=None, start=None, end=None) -> Keyphrase:
         if id is not None:
@@ -641,4 +661,4 @@ class Sentence:
         return None
 
     def __repr__(self):
-        return "Sentence(text=%r, keyphrases=%r, relations=%r)" % (self.text, self.keyphrases, self.relations)
+        return "Sentence(text=%r, keyphrases=%r, relations=%r, tokens=%r)" % (self.text, self.keyphrases, self.relations, self.tokens)
