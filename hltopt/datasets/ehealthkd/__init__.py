@@ -19,17 +19,14 @@ def cached(func):
     return f
 
 
+relation_mapper = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
+
+
 class TassDataset:
-    def __init__(self, sentences=None, validation_size=0):
+    def __init__(self, sentences=None, validation_size=0, max_length=0):
         self.sentences = sentences or []
         self.validation_size = validation_size
-
-        # self.texts = []
-        # self.labels = []
-        # self.relations = []
-        # self.vectors = []
-        # self.tokens = []
-        # self.relmap = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
+        self.max_length = max_length
 
     def clone(self):
         return TassDataset([s.clone() for s in self.sentences], self.validation_size)
@@ -52,6 +49,7 @@ class TassDataset:
         sentences = [s for s in text.split('\n') if s]
 
         self._parse_ann(sentences, goldA, goldB, goldC)
+
         return len(sentences)
 
     def _parse_ann(self, sentences, goldA, goldB, goldC):
@@ -100,9 +98,29 @@ class TassDataset:
         return self.sentences[0].tokens[0].features.shape[0]
 
     def split(self):
-        train = TassDataset(self.sentences[:-self.validation_size])
-        dev = TassDataset(self.sentences[-self.validation_size:])
+        train = TassDataset(self.sentences[:-self.validation_size], max_length=self.max_length)
+        dev = TassDataset(self.sentences[-self.validation_size:], max_length=self.max_length)
+
+        if self.__class__ != TassDataset:
+            train = self.__class__(train)
+            dev = self.__class__(dev)
+
         return train, dev
+
+    def token_pairs(self, enums=False):
+        for sentence in self.sentences:
+            for i, k1 in enumerate(sentence.tokens):
+                # if k1.label == '':
+                #     continue
+
+                for j, k2 in enumerate(sentence.tokens):
+                    # if k2.label == '':
+                    #     continue
+
+                    if enums:
+                        yield i, j, k1, k2
+                    else:
+                        yield k1, k2
 
     def task_a(self):
         return TaskADataset(self)
@@ -113,439 +131,21 @@ class TassDataset:
     def task_c(self):
         return TaskCDataset(self)
 
-    def task_a_by_word(self):
-        self._check_repr()
-
-        xtrain = self.train_vectors
-        ytrain = [np.asarray([1 if l else 0 for l in sent]) for sent in self.train(self.labels_map)]
-        xdev = self.dev_vectors
-
-        return xtrain, ytrain, xdev
-
-    def task_a_by_sentence(self):
-        self._check_repr()
-
-        xtrain = []
-        ytrain = []
-
-        for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
-            padding = self.max_length - len(sentence)
-
-            if padding < 0:
-                sentence = sentence[:self.max_length,:]
-                padding = None
-            else:
-                _, cols = self.vectors[0].shape
-                padding = np.zeros((padding, cols))
-                sentence = np.vstack((sentence, padding))
-
-            for i, lb in enumerate(labels):
-                col = np.zeros((self.max_length, 1))
-                col[i,0] = 1.0
-                x = np.hstack((sentence, col))
-                y = 0 if lb == '' else 1
-
-                xtrain.append(x)
-                ytrain.append(y)
-
-        xdev = []
-
-        for sentence in self.dev_vectors:
-            xdev_sent = []
-            sentence_size = len(sentence)
-            padding = self.max_length - len(sentence)
-
-            if padding < 0:
-                sentence = sentence[:self.max_length,:]
-                padding = None
-            else:
-                _, cols = self.vectors[0].shape
-                padding = np.zeros((padding, cols))
-                sentence = np.vstack((sentence, padding))
-
-            for i in range(sentence_size):
-                col = np.zeros((self.max_length, 1))
-                col[i,0] = 1.0
-                x = np.hstack((sentence, col))
-
-                xdev_sent.append(x)
-            xdev.append(np.asarray(xdev_sent))
-
-        return xtrain, ytrain, xdev
-
-    def task_b_by_word(self):
-        self._check_repr()
-
-        xtrain = []
-        ytrain = []
-
-        ymap = {
-            'Action': 0,
-            'Concept': 1,
-        }
-
-        for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
-            new_sent = []
-            new_lbl = []
-            for word, lbl in szip(sentence, labels):
-                if lbl:
-                    new_sent.append(word)
-                    new_lbl.append(ymap[lbl])
-            if new_sent:
-                new_sent = np.vstack(new_sent)
-                new_lbl = np.hstack(new_lbl)
-
-            xtrain.append(new_sent)
-            ytrain.append(new_lbl)
-
-        xdev = self.dev_vectors
-
-        return xtrain, ytrain, xdev
-
-    def task_b_by_sentence(self):
-        self._check_repr()
-
-        xtrain = []
-        ytrain = []
-
-        ymap = {
-            'Action': 0,
-            'Concept': 1,
-        }
-
-        for sentence, labels in szip(self.train_vectors, self.train(self.labels_map)):
-            padding = self.max_length - len(sentence)
-
-            if padding < 0:
-                sentence = sentence[:self.max_length,:]
-                padding = None
-            else:
-                _, cols = self.vectors[0].shape
-                padding = np.zeros((padding, cols))
-                sentence = np.vstack((sentence, padding))
-
-            for i, lb in enumerate(labels):
-                col = np.zeros((self.max_length, 1))
-                col[i,0] = 1.0
-                x = np.hstack((sentence, col))
-                y = ymap[lb]
-
-                xtrain.append(x)
-                ytrain.append(y)
-
-        xdev = []
-
-        for sentence in self.dev_vectors:
-            xdev_sent = []
-            sentence_size = len(sentence)
-            padding = self.max_length - len(sentence)
-
-            if padding < 0:
-                sentence = sentence[:self.max_length,:]
-                padding = None
-            else:
-                _, cols = self.vectors[0].shape
-                padding = np.zeros((padding, cols))
-                sentence = np.vstack((sentence, padding))
-
-            for i in range(sentence_size):
-                col = np.zeros((self.max_length, 1))
-                col[i,0] = 1.0
-                x = np.hstack((sentence, col))
-
-                xdev_sent.append(x)
-            xdev.append(np.asarray(xdev_sent))
-
-        return xtrain, ytrain, xdev
-
-    def task_c_by_word(self):
-        self._check_repr()
-
-        x = []
-        y = []
-        mapping = []
-
-        for feats, sent, lbls, rels in szip(self.vectors, self.tokens, self.labels, self.relations):
-            rel_pairs = []
-            rel_map = []
-            sent_mapp = []
-            for i,t1 in enumerate(sent):
-                if (t1.init, t1.end) not in lbls:
-                    continue
-
-                for j,t2 in enumerate(sent):
-                    if (t2.init, t2.end) not in lbls:
-                        continue
-
-                    pair_map = {}
-
-                    # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
-
-                    rel_pairs.append(np.hstack((feats[i], feats[j])))
-
-                    # calculamos todas las relaciones entre id1 y id2
-                    for rel, org, dest in rels:
-                        if org == id1 and dest == id2:
-                            pair_map[rel] = True
-
-                    rel_map.append(pair_map)
-                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
-
-            mapping.append(sent_mapp)
-            rel_pairs = np.vstack(rel_pairs)
-            rel_map = self.relmap.transform(rel_map).toarray()
-
-            x.append(rel_pairs)
-            y.append(rel_map)
-
-        xtrain = self.train(x)
-        ytrain = self.train(y)
-        xdev = self.dev(x)
-        mapping = self.dev(mapping)
-
-        return xtrain, ytrain, xdev, mapping
-
-    def task_c_by_sentence(self):
-        self._check_repr()
-
-        xtrain = []
-        ytrain = []
-
-        for feats, sent, lbls, rels in szip(self.train_vectors, self.train_tokens, self.train_labels, self.train_relations):
-            sent_mapp = []
-            for i,t1 in enumerate(sent):
-                if (t1.init, t1.end) not in lbls:
-                    continue
-
-                for j,t2 in enumerate(sent):
-                    if (t2.init, t2.end) not in lbls:
-                        continue
-
-                    pair_map = {}
-
-                    xmatrix = feats
-
-                    # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
-
-                    rows, cols = xmatrix.shape
-                    padding = self.max_length - rows
-
-                    if padding:
-                        xmatrix = np.vstack((xmatrix, np.zeros((padding, cols))))
-
-                    indicators = np.zeros((self.max_length, 2))
-                    indicators[i:-2] = 1
-                    indicators[j:-1] = 1
-
-                    xmatrix = np.hstack((xmatrix, indicators))
-
-                    xtrain.append(xmatrix)
-
-                    # calculamos todas las relaciones entre id1 y id2
-                    for rel, org, dest in rels:
-                        if org == id1 and dest == id2:
-                            pair_map[rel] = True
-
-                    ytrain.append(self.relmap.transform([pair_map]).reshape(1,-1).toarray())
-
-        xdev = []
-        mapping = []
-
-        for feats, sent, lbls, rels in szip(self.dev_vectors, self.dev_tokens, self.dev_labels, self.dev_relations):
-            sent_mapp = []
-            xdev_sent = []
-            for i,t1 in enumerate(sent):
-                if (t1.init, t1.end) not in lbls:
-                    continue
-
-                for j,t2 in enumerate(sent):
-                    if (t2.init, t2.end) not in lbls:
-                        continue
-
-                    pair_map = {}
-
-                    xmatrix = feats
-
-                    # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
-
-                    rows, cols = xmatrix.shape
-                    padding = self.max_length - rows
-
-                    if padding:
-                        xmatrix = np.vstack((xmatrix, np.zeros((padding, cols))))
-
-                    indicators = np.zeros((self.max_length, 2))
-                    indicators[i:-2] = 1
-                    indicators[j:-1] = 1
-
-                    xmatrix = np.hstack((xmatrix, indicators))
-
-                    xdev_sent.append(xmatrix)
-                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
-
-            xdev_sent = np.asarray(xdev_sent)
-            xdev.append(xdev_sent)
-            mapping.append(sent_mapp)
-
-        return xtrain, ytrain, xdev, mapping
-
-    def task_ab_by_word(self):
-        self._check_repr()
-
-        xtrain = self.train_vectors
-        ytrain = [np.asarray(sent) for sent in self.train(self.labels_map)]
-        xdev = self.dev_vectors
-
-        return xtrain, ytrain, xdev
-
-    def task_bc_by_word(self):
-        self._check_repr()
-
-        x = []
-        y = []
-        mapping = []
-
-        label_maps = {
-            'Action': [0,1],
-            'Concept': [1,0],
-            None: [0,0]
-        }
-
-        for feats, sent, lbls, rels in szip(self.vectors, self.tokens, self.labels, self.relations):
-            rel_pairs = []
-            rel_map = []
-            rel_clss = []
-            sent_mapp = []
-            for i,t1 in enumerate(sent):
-                if (t1.init, t1.end) not in lbls:
-                    continue
-
-                for j,t2 in enumerate(sent):
-                    if (t2.init, t2.end) not in lbls:
-                        continue
-
-                    pair_map = {}
-
-                    # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
-
-                    rel_pairs.append(np.hstack((feats[i], feats[j])))
-
-                    # calculamos todas las relaciones entre id1 y id2
-                    for rel, org, dest in rels:
-                        if org == id1 and dest == id2:
-                            pair_map[rel] = True
-
-                    rel_map.append(pair_map)
-                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
-
-                    # task B specific representation
-                    lbl1e = label_maps[lbl1]
-                    lbl2e = label_maps[lbl2]
-                    lble = np.asarray(lbl1e + lbl2e)
-                    rel_clss.append(lble)
-
-            mapping.append(sent_mapp)
-            rel_pairs = np.vstack(rel_pairs)
-            rel_map = self.relmap.transform(rel_map).toarray()
-
-            # task B specific representation
-            rel_clss = np.vstack(rel_clss)
-            rel_map = np.hstack((rel_map, rel_clss))
-
-            x.append(rel_pairs)
-            y.append(rel_map)
-
-        xtrain = self.train(x)
-        ytrain = self.train(y)
-        xdev = self.dev(x)
-        mapping = self.dev(mapping)
-
-        return xtrain, ytrain, xdev, mapping
-
-    def task_abc_by_word(self):
-        self._check_repr()
-
-        x = []
-        y = []
-        mapping = []
-
-        label_maps = {
-            'Action': [0,1],
-            'Concept': [1,0],
-            None: [0,0]
-        }
-
-        for feats, sent, lbls, rels in szip(self.vectors, self.tokens, self.labels, self.relations):
-            rel_pairs = []
-            rel_map = []
-            rel_clss = []
-            sent_mapp = []
-            for i,t1 in enumerate(sent):
-                for j,t2 in enumerate(sent):
-                    pair_map = {}
-
-                    # id1, id2 son los id de 2 tokens
-                    id1, lbl1 = lbls.get((t1.init, t1.end), (None, None))
-                    id2, lbl2 = lbls.get((t2.init, t2.end), (None, None))
-
-                    rel_pairs.append(np.hstack((feats[i], feats[j])))
-
-                    # calculamos todas las relaciones entre id1 y id2
-                    for rel, org, dest in rels:
-                        if org == id1 and dest == id2:
-                            pair_map[rel] = True
-
-                    rel_map.append(pair_map)
-                    sent_mapp.append(((t1.init, t1.end),(t2.init, t2.end)))
-
-                    # task B specific representation
-                    lbl1e = label_maps[lbl1]
-                    lbl2e = label_maps[lbl2]
-                    lble = np.asarray(lbl1e + lbl2e)
-                    rel_clss.append(lble)
-
-            mapping.append(sent_mapp)
-            rel_pairs = np.vstack(rel_pairs)
-            rel_map = self.relmap.transform(rel_map).toarray()
-
-            # task B specific representation
-            rel_clss = np.vstack(rel_clss)
-            rel_map = np.hstack((rel_map, rel_clss))
-
-            x.append(rel_pairs)
-            y.append(rel_map)
-
-        xtrain = self.train(x)
-        ytrain = self.train(y)
-        xdev = self.dev(x)
-        mapping = self.dev(mapping)
-
-        return xtrain, ytrain, xdev, mapping
+    def task_ab(self):
+        return TaskABDataset(self)
+
+    def task_bc(self):
+        return TaskBCDataset(self)
 
 
 class TaskADataset(TassDataset):
     def __init__(self, dataset:TassDataset):
         self.sentences = dataset.sentences
         self.validation_size = dataset.validation_size
+        self.max_length = dataset.max_length
 
     def clone(self):
         raise NotImplementedError("It is unsafe to clone a specialized dataset!")
-
-    def split(self):
-        train, dev = super().split()
-
-        train = TaskADataset(train)
-        dev = TaskADataset(dev)
-
-        return train, dev
 
     @property
     def predict_size(self):
@@ -558,22 +158,189 @@ class TaskADataset(TassDataset):
         for sentence in self.sentences:
             for token in sentence.tokens:
                 X.append(token.features)
-                y.append(token.binary_label)
+                y.append(token.keyword_label)
 
         return np.vstack(X), np.hstack(y)
 
     def by_sentence(self):
-        max_length = max(len(s) for s in self.sentences)
-
         X = []
         y = []
 
         for sentence in self.sentences:
             for i, token in enumerate(sentence.tokens):
-                X.append(sentence.token_features(i, max_length))
-                y.append(token.binary_label)
+                X.append(sentence.token_features(self.max_length, i))
+                y.append(token.keyword_label)
 
         return np.asarray(X), np.hstack(y)
+
+
+class TaskBDataset(TassDataset):
+    def __init__(self, dataset:TassDataset):
+        self.sentences = dataset.sentences
+        self.validation_size = dataset.validation_size
+        self.max_length = dataset.max_length
+
+    def clone(self):
+        raise NotImplementedError("It is unsafe to clone a specialized dataset!")
+
+    @property
+    def predict_size(self):
+        return 1
+
+    def by_word(self):
+        X = []
+        y = []
+
+        for sentence in self.sentences:
+            for token in sentence.tokens:
+                if token.label != '':
+                    X.append(token.features)
+                    y.append(token.binary_label)
+
+        return np.vstack(X), np.hstack(y)
+
+    def by_sentence(self):
+        X = []
+        y = []
+
+        for sentence in self.sentences:
+            for i, token in enumerate(sentence.tokens):
+                if token.label != '':
+                    X.append(sentence.token_features(self.max_length, i))
+                    y.append(token.binary_label)
+
+        return np.asarray(X), np.hstack(y)
+
+
+class TaskCDataset(TassDataset):
+    def __init__(self, dataset:TassDataset):
+        self.sentences = dataset.sentences
+        self.validation_size = dataset.validation_size
+        self.max_length = dataset.max_length
+
+    def clone(self):
+        raise NotImplementedError("It is unsafe to clone a specialized dataset!")
+
+    @property
+    def predict_size(self):
+        return 6
+
+    def by_word(self):
+        X = []
+        y = []
+
+        for k1, k2 in self.token_pairs():
+            relations = k1.sentence.find_relations(k1.id, k2.id)
+            relation_labels = {r.label:True for r in relations}
+            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+
+            feature_vector = np.hstack((k1.features, k2.features))
+
+            X.append(feature_vector)
+            y.append(relation_vector)
+
+        return np.vstack(X), np.vstack(y)
+
+    def by_sentence(self):
+        X = []
+        y = []
+
+        for i, j, k1, k2 in self.token_pairs(enums=True):
+            relations = k1.sentence.find_relations(k1.id, k2.id)
+            relation_labels = {r.label:True for r in relations}
+            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+
+            feature_vector = k1.sentence.token_features(self.max_length, i, j)
+
+            X.append(feature_vector)
+            y.append(relation_vector)
+
+        return np.asarray(X), np.vstack(y)
+
+
+class TaskABDataset(TassDataset):
+    def __init__(self, dataset:TassDataset):
+        self.sentences = dataset.sentences
+        self.validation_size = dataset.validation_size
+        self.max_length = dataset.max_length
+
+    def clone(self):
+        raise NotImplementedError("It is unsafe to clone a specialized dataset!")
+
+    @property
+    def predict_size(self):
+        return 3
+
+    def by_word(self):
+        X = []
+        y = []
+
+        for sentence in self.sentences:
+            for token in sentence.tokens:
+                X.append(token.features)
+                y.append(token.ternary_label)
+
+        return np.vstack(X), np.hstack(y)
+
+    def by_sentence(self):
+        X = []
+        y = []
+
+        for sentence in self.sentences:
+            for i, token in enumerate(sentence.tokens):
+                X.append(sentence.token_features(self.max_length, i))
+                y.append(token.ternary_label)
+
+        return np.asarray(X), np.hstack(y)
+
+
+class TaskBCDataset(TassDataset):
+    def __init__(self, dataset:TassDataset):
+        self.sentences = dataset.sentences
+        self.validation_size = dataset.validation_size
+        self.max_length = dataset.max_length
+
+    def clone(self):
+        raise NotImplementedError("It is unsafe to clone a specialized dataset!")
+
+    @property
+    def predict_size(self):
+        return 8
+
+    def by_word(self):
+        X = []
+        y = []
+
+        for k1, k2 in self.token_pairs():
+            labels = np.asarray([k1.binary_label, k2.binary_label])
+
+            relations = k1.sentence.find_relations(k1.id, k2.id)
+            relation_labels = {r.label:True for r in relations}
+            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+            relation_vector = np.hstack((relation_vector, labels))
+
+            feature_vector = np.hstack((k1.features, k2.features))
+
+            X.append(feature_vector)
+            y.append(relation_vector)
+
+        return np.vstack(X), np.vstack(y)
+
+    def by_sentence(self):
+        X = []
+        y = []
+
+        for i, j, k1, k2 in self.token_pairs(enums=True):
+            relations = k1.sentence.find_relations(k1.id, k2.id)
+            relation_labels = {r.label:True for r in relations}
+            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+
+            feature_vector = k1.sentence.token_features(self.max_length, i, j)
+
+            X.append(feature_vector)
+            y.append(relation_vector)
+
+        return np.asarray(X), np.vstack(y)
 
 
 class Keyphrase:
@@ -593,8 +360,16 @@ class Keyphrase:
         return self.sentence.text[self.start:self.end]
 
     @property
-    def binary_label(self) -> int:
+    def keyword_label(self) -> int:
         return 0 if self.label == '' else 1
+
+    @property
+    def binary_label(self) -> int:
+        return 0 if self.label == 'Action' else 1
+
+    @property
+    def ternary_label(self) -> int:
+        return 0 if self.label == '' else 1 if self.label == 'Action' else 2
 
     def mark_keyword(self, value):
         if hasattr(self, 'is_kw'):
@@ -602,8 +377,30 @@ class Keyphrase:
 
         self.is_kw = value
 
+    def mark_label(self, value):
+        if not hasattr(self, 'is_kw'):
+            raise ValueError("Must be marked as keyword first")
+
+        if isinstance(value, int):
+            value = ['Action', 'Concept'][value]
+
+        self.label = value if self.is_kw else ''
+
+    def mark_ternary(self, value):
+        if hasattr(self, 'is_kw'):
+            raise ValueError("Already marked!")
+
+        # if isinstance(value, np.ndarray):
+        #     value = np.argmax(a)
+
+        if isinstance(value, int):
+            value = ['', 'Action', 'Concept'][value]
+
+        self.label = value
+        self.is_kw = self.label != ''
+
     def __repr__(self):
-        return "Keyphrase(text=%r, label=%r)" % (self.text, self.label)
+        return "Keyphrase(text=%r, label=%r, id=%r)" % (self.text, self.label, self.id)
 
 
 class Relation:
@@ -634,6 +431,7 @@ class Sentence:
         self.keyphrases = []
         self.relations = []
         self.tokens = []
+        self.predicted_relations = []
 
     def clone(self):
         s = Sentence(self.text)
@@ -651,10 +449,18 @@ class Sentence:
         results = []
 
         for r in self.relations:
-            if r.orig == orig and r.destination == dest:
+            if r.origin == orig and r.destination == dest:
                 results.append(r)
 
         return results
+
+    def find_relation(self, orig, dest, label=None):
+        for r in self.relations:
+            if r.origin == orig and r.destination == dest:
+                if (label and r.label == label) or label is None:
+                    return r
+
+        return None
 
     def _find_keyphrase_by_id(self, id):
         for k in self.keyphrases:
@@ -670,7 +476,7 @@ class Sentence:
 
         return None
 
-    def token_features(self, index:int, max_length:int):
+    def token_features(self, max_length:int, *index:int):
         X = []
 
         for token in self.tokens:
@@ -683,13 +489,34 @@ class Sentence:
             _, cols = X.shape
             X = np.vstack((X, np.zeros((padding, cols))))
 
-        idxcols = np.zeros((max_length, 1))
-        idxcols[index, 0] = 1.0
+        idxcols = np.zeros((max_length, len(index)))
+        for col,row in enumerate(index):
+            idxcols[row, col] = 1.0
 
         return np.hstack((X, idxcols))
+
+    def add_predicted_relations(self, k1, k2, relations):
+        if not isinstance(relations, list):
+            relations = list(relation_mapper.inverse_transform(relations.reshape(1,-1))[0])
+
+        for relation in relations:
+            if relation in ['subject', 'target']:
+                if k1.label != 'Action' or k2.label != 'target':
+                    continue
+            else:
+                if k1.label != 'Concept' or k2.label != 'Concept':
+                    continue
+
+            self.predicted_relations.append(Relation(self, k1.id, k2.id, relation))
+
+    def invert(self):
+        s = Sentence(self.text)
+        s.keyphrases = [t for t in self.tokens if t.is_kw]
+        s.relations = self.predicted_relations
+        return s
 
     def __len__(self):
         return len(self.tokens)
 
     def __repr__(self):
-        return "Sentence(text=%r, keyphrases=%r, relations=%r, tokens=%r)" % (self.text, self.keyphrases, self.relations, self.tokens)
+        return "Sentence(text=%r, keyphrases=%r, relations=%r)" % (self.text, self.keyphrases, self.relations)

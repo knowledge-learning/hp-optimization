@@ -36,10 +36,11 @@ from nltk.corpus import stopwords
 
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
+from tensorflow.keras.utils import to_categorical
 # from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
 
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
-from ..datasets.ehealthkd import TassDataset, Keyphrase, Relation
+from ..datasets.ehealthkd import TassDataset, Keyphrase, Relation, relation_mapper
 
 from ..utils import szip, sdiv
 
@@ -177,31 +178,31 @@ class TassGrammar(Grammar):
         try:
             if choice == 'A B C':
                 # Ejecutar tareas A, B y C en secuencia
-                result_A = self._a(ind, dataset)
-                val_labels = self._b(ind, dataset, result_A)
-                val_relations = self._c(ind, dataset, val_labels)
+                self._a(ind, dataset)
+                self._b(ind, dataset)
+                self._c(ind, dataset)
             elif choice == 'AB C':
                 # Ejecutar tareas AB juntas y C en secuencia
-                val_labels = self._ab(ind, dataset)
-                val_relations = self._c(ind, dataset, val_labels)
+                self._ab(ind, dataset)
+                self._c(ind, dataset)
             elif choice == 'A BC':
                 # Ejecutar tarea A y luego BC
-                results_A = self._a(ind, dataset)
-                val_labels, val_relations = self._bc(ind, dataset, results_A)
+                self._a(ind, dataset)
+                self._bc(ind, dataset)
             else:
                 # Ejecutar Tarea ABC junta
-                val_labels, val_relations = self._abc(ind, dataset)
+                self._abc(ind, dataset)
 
-            return self._score(dataset.dev_labels, val_labels, dataset.dev_relations, val_relations)
+            return self._score(dataset)
         except ValueError as e:
             if 'must be non-negative' in str(e):
                 raise InvalidPipeline(str(e))
             else:
                 raise e
 
-    def _score(self, train_labels, val_labels, train_relations, val_relations):
-        assert len(train_labels) == len(val_labels)
-        assert len(train_relations) == len(val_relations)
+    def _score(self, dataset:TassDataset):
+        # assert len(train_labels) == len(val_labels)
+        # assert len(train_relations) == len(val_relations)
 
         # score counts
         correctA = 0
@@ -216,52 +217,40 @@ class TassGrammar(Grammar):
         missingC = 0
         spuriousC = 0
 
-        #label maps
-        t2v = {}
-        v2t = {}
+        _, dev = dataset.split()
 
-        for l1, l2 in szip(train_labels, val_labels):
-            for start, end in l1:
-                if (start, end) in l2:
-                    t2v[l1[(start, end)][0]] = l2[(start,end)][0]
-                    v2t[l2[(start, end)][0]] = l1[(start,end)][0]
+        for actual in dev.sentences:
+            predicted = actual.invert()
 
+            for phrase in actual.keyphrases:
+                match = predicted.find_keyphrase(id=phrase.id)
+
+                if match:
                     correctA += 1
-                    if l1[(start, end)][1] == l2[(start, end)][1]:
+
+                    if match.label == phrase.label:
                         correctB += 1
                     else:
                         incorrectB += 1
                 else:
                     missingA += 1
 
-            for start, end in l2:
-                if not (start, end) in l1:
+            for phrase in predicted.keyphrases:
+                if not actual.find_keyphrase(id=phrase.id):
                     spuriousA += 1
 
-        for r1, r2 in szip(train_relations, val_relations):
-            for r,to,td in r1:
-                if not to in t2v or not td in t2v:
-                    missingC += 1
-                    continue
+            for relation in actual.relations:
+                match = predicted.find_relation(relation.origin, relation.destination, relation.label)
 
-                vo = t2v[to]
-                vd = t2v[td]
-
-                if (r,vo,vd) in r2:
+                if match:
                     correctC += 1
                 else:
                     missingC += 1
 
-        for r1, r2 in szip(train_relations, val_relations):
-            for r,vo,vd in r2:
-                if not vo in v2t or not vd in v2t:
-                    spuriousC += 1
-                    continue
+            for relation in predicted.relations:
+                match = actual.find_relation(relation.origin, relation.destination)
 
-                to = v2t[vo]
-                td = v2t[vd]
-
-                if (r,to,td) not in r1:
+                if not match:
                     spuriousC += 1
 
         print("[*] Task A: %0.2f" % sdiv(correctA, correctA + missingA + spuriousA))
@@ -275,6 +264,311 @@ class TassGrammar(Grammar):
         recall = sdiv(top, msn)
 
         return sdiv(2 * precision * recall, precision + recall)
+
+    def _repr(self, i, dataset:TassDataset):
+        # 'Prep Token SemFeat PosPrep MulWords Embed',
+        dataset = self._prep(i, dataset)
+        dataset = self._token(i, dataset)
+        dataset = self._semfeat(i, dataset)
+        dataset = self._posprep(i, dataset)
+        dataset = self._mulwords(i, dataset)
+        dataset = self._embed(i, dataset)
+
+        return dataset
+
+    def _prep(self, i, dataset:TassDataset):
+        #'DelPunt StripAcc'
+        dataset = self._delpunt(i, dataset)
+        return self._stripacc(i, dataset)
+
+    def _delpunt(self, i, dataset:TassDataset):
+        #yes | no
+        if i.nextbool():
+            for sentence in dataset.sentences:
+                sentence.text = sentence.text.translate({c:" " for c in string.punctuation})
+
+        return dataset
+
+    def _stripacc(self, i, dataset:TassDataset):
+        #yes | no
+        if i.nextbool():
+            for sentence in dataset.sentences:
+                sentence.text = gensim.utils.deaccent(sentence.text)
+
+        return dataset
+
+    def _token(self, i, dataset:TassDataset):
+        ids = max(k.id for sentence in dataset.sentences for k in sentence.keyphrases) * 10
+
+        for sentence in dataset.sentences:
+            for token in self.spacy_nlp(sentence.text):
+                features = dict(
+                    norm=token.norm_,
+                    pos=token.pos_,
+                    tag=token.tag_,
+                    dep=token.dep_,
+                    vector=token.vector
+                )
+                start = token.idx
+                end = start + len(token.text)
+                match = sentence.find_keyphrase(start=start, end=end)
+
+                if match:
+                    label = match.label
+                    id = match.id
+                else:
+                    label = ''
+                    id = ids
+                    ids + 1
+
+                keyword = Keyphrase(sentence, features, label, id, start, end)
+                sentence.tokens.append(keyword)
+
+        dataset.max_length = max(len(s) for s in dataset.sentences)
+        return dataset
+
+    def _posprep(self, i, dataset):
+        self._stopw(i, dataset)
+        self._stem(i, dataset)
+
+        return dataset
+
+    def _stem(self, i, dataset:TassDataset):
+        if i.nextbool():
+            for sentence in dataset.sentences:
+                for token in sentence.tokens:
+                    token.features['norm'] = self.stemmer.stem(token.features['norm'])
+
+    def _stopw(self, i, dataset:TassDataset):
+        if i.nextbool():
+            sw = set(stopwords.words('spanish'))
+        else:
+            sw = set()
+
+        for sentence in dataset.sentences:
+            sentence.tokens = [t for t in sentence.tokens if t.features['norm'] not in sw]
+
+    def _semfeat(self, i, dataset:TassDataset):
+        # incluir pos-tag?
+        if not i.nextbool():
+            for sentence in dataset.sentences:
+                for token in sentence.tokens:
+                    token.features.pop('pos')
+                    token.features.pop('tag')
+
+        # incluir dependencias
+        if not i.nextbool():
+            for sentence in dataset.sentences:
+                for token in sentence.tokens:
+                    token.features.pop('dep')
+
+        self._umls(i, dataset)
+        self._snomed(i, dataset)
+
+        return dataset
+
+    def _umls(self, i, dataset:TassDataset):
+        warnings.warn("UMLS not implemented yet")
+
+        if i.nextbool():
+            return True
+
+    def _snomed(self, i, dataset:TassDataset):
+        warnings.warn("SNOMED not implemented yet")
+
+        if i.nextbool():
+            return True
+
+    def _mulwords(self, i, tokens):
+        warnings.warn("MultiWords not implemented yet")
+
+        #'MulWords' : 'countPhrase | freeling | Ngram',
+        choice = i.choose('countPhrase', 'freeling', 'Ngram')
+
+        if choice == 'Ngram':
+            ngram = i.nextint()
+
+        return tokens
+
+    def _embed(self, i, dataset:TassDataset):
+        # 'Embed' : 'wordVec | onehot | none',
+        choice = i.choose('wv', 'onehot', 'none')
+
+        # train the dict-vectorizer in the relevant features
+        feature_dicts = [dict(token.features) for sentence in dataset.sentences for token in sentence.tokens]
+
+        if choice == 'wv' or choice == 'none':
+            # remove text *and* vector
+            for d in feature_dicts:
+                d.pop('vector')
+                d.pop('norm')
+        elif choice == 'onehot':
+            # remove only vector
+            for d in feature_dicts:
+                d.pop('vector')
+
+        vectorizer = DictVectorizer().fit(feature_dicts)
+
+        # now we vectorize
+        for sentence in dataset.sentences:
+            for token in sentence.tokens:
+                # save the vw vector for later
+
+                vector = token.features['vector']
+                features = vectorizer.transform([token.features]).toarray().flatten()
+
+                # now maybe reuse that wv
+                if choice == 'wv':
+                    features = np.hstack((vector, features))
+
+                token.features = features
+
+        return dataset
+
+
+    def _a(self, ind:Individual, dataset:TassDataset):
+        # choose between standard or sequence classifiers
+        method = ind.choose(self._class, self._hmm)
+
+        dataset = dataset.task_a()
+        train, dev = dataset.split()
+        prediction = method(ind, train, dev)
+
+        prediction = (prediction > 0.5).reshape(-1).tolist()
+        all_tokens = [token for sentence in dev.sentences for token in sentence.tokens]
+
+        for token, is_kw in szip(all_tokens, prediction):
+            token.mark_keyword(is_kw)
+
+    def _b(self, ind:Individual, dataset:TassDataset):
+        dataset = dataset.task_b()
+        train, dev = dataset.split()
+
+        prediction = self._class(ind, train, dev)
+        prediction = (prediction > 0.5).astype(int).reshape(-1).tolist()
+        all_tokens = [token for sentence in dev.sentences for token in sentence.tokens if token.label != '']
+
+        for token, label in szip(all_tokens, prediction):
+            token.mark_label(label)
+
+    def _c(self, ind:Individual, dataset:TassDataset):
+        dataset = dataset.task_c()
+        train, dev = dataset.split()
+
+        prediction = self._class(ind, train, dev)
+        prediction = (prediction > 0.5).astype(int)
+        all_token_pairs = list(dev.token_pairs())
+
+        for (k1, k2), relations in szip(all_token_pairs, prediction):
+            k1.sentence.add_predicted_relations(k1, k2, relations)
+
+    def _ab(self, ind, dataset):
+        method = ind.choose(self._class, self._hmm)
+
+        dataset = dataset.task_ab()
+        train, dev = dataset.split()
+        prediction = method(ind, train, dev)
+
+        prediction = (prediction > 0.5).astype(int).reshape(-1).tolist()
+        all_tokens = [token for sentence in dev.sentences for token in sentence.tokens]
+
+        for token, label in szip(all_tokens, prediction):
+            token.mark_ternary(label)
+
+    def _bc(self, ind, dataset):
+        dataset = dataset.task_bc()
+        train, dev = dataset.split()
+
+        prediction = self._class(ind, train, dev)
+        prediction = (prediction > 0.5).astype(int)
+
+        all_token_pairs = list(dev.token_pairs())
+
+        for (k1, k2), relations in szip(all_token_pairs, prediction):
+            relations, l1, l2 = np.split(relations, [6,7])
+            print(relations, l1, l2)
+            k1.mark_label(l1[0])
+            k2.mark_label(l2[0])
+            k1.sentence.add_predicted_relations(k1, k2, relations)
+
+        # calcular la forma de la entrada
+        # _, cols = dataset.vectors[0].shape
+        # intput_shape = cols
+        # output_shape = 10
+
+        # clss, clss_type = self._class(ind, intput_shape, output_shape)
+
+        # if clss_type == 'seq':
+        #     xtrain, ytrain, xdev, mapping = dataset.task_bc_by_sentence()
+        # else:
+        #     xtrain, ytrain, xdev, mapping = dataset.task_bc_by_word()
+        #     clss = OneVsRestClassifier(clss)
+        #     xtrain = np.vstack(xtrain)
+        #     ytrain = np.vstack(ytrain)
+
+        # clss.fit(xtrain, ytrain)
+
+        # predictions = [clss.predict(x) for x in xdev]
+
+        # # Labels
+        # ids = 0
+        # val_labels = []
+        # for sent, resA, resB in szip(dataset.dev_tokens, results_A, predictions):
+        #     sentence_labels = {}
+        #     for tok, clsA in szip(sent, resA):
+        #         if clsA:
+        #             sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
+        #             ids += 1
+        #     val_labels.append(sentence_labels)
+
+        # # compute actual labels
+        # # labels map
+        # bc_labels_map = {
+        #     (0,0): 'None',
+        #     (1,1): 'None',
+        #     (1,0): 'Concept',
+        #     (0,1):  'Action'
+        # }
+
+        # for lbl, resC, mapC in szip(val_labels, predictions, mapping):
+        #     for rels, (org, dest) in szip(resC, mapC):
+        #         if org not in lbl or dest not in lbl:
+        #             continue
+        #         orgid, orglbs = lbl[org]
+        #         destid, destlbs = lbl[dest]
+
+        #         orglbl = bc_labels_map[tuple(rels[-4:-2])]
+        #         destlbl = bc_labels_map[tuple(rels[-2:])]
+
+        #         if orglbl in orglbs:
+        #             orglbs[orglbl] += 1
+        #         if destlbl in  destlbs:
+        #             destlbs[destlbl] += 1
+
+        # val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
+
+        # # # compute relations
+        # val_relations = []
+        # for lbl, resC, mapC in szip(val_labels, predictions, mapping):
+        #     sentence_rels = []
+        #     for rels, (org, dest) in szip(resC, mapC):
+        #         if org not in lbl or dest not in lbl:
+        #             continue
+        #         orgid, orglb = lbl[org]
+        #         destid, destlb = lbl[dest]
+
+        #         rels = dataset.relmap.inverse_transform(rels[:-4].reshape(1,-1))[0]
+        #         for r in rels:
+        #             if r in ['subject', 'target']:
+        #                 if orglb == 'Action' and destlb == 'Concept':
+        #                     sentence_rels.append((r, orgid, destid))
+        #             else:
+        #                 if orglb == 'Concept' and destlb == 'Concept':
+        #                     sentence_rels.append((r, orgid, destid))
+
+        #     val_relations.append(sentence_rels)
+
+        # return val_labels, val_relations
 
     def _abc(self, ind, dataset):
         # calcular la forma de la entrada
@@ -358,141 +652,6 @@ class TassGrammar(Grammar):
 
         return val_labels, val_relations
 
-    def _bc(self, ind, dataset, results_A):
-        # calcular la forma de la entrada
-        _, cols = dataset.vectors[0].shape
-        intput_shape = cols
-        output_shape = 10
-
-        clss, clss_type = self._class(ind, intput_shape, output_shape)
-
-        if clss_type == 'seq':
-            xtrain, ytrain, xdev, mapping = dataset.task_bc_by_sentence()
-        else:
-            xtrain, ytrain, xdev, mapping = dataset.task_bc_by_word()
-            clss = OneVsRestClassifier(clss)
-            xtrain = np.vstack(xtrain)
-            ytrain = np.vstack(ytrain)
-
-        clss.fit(xtrain, ytrain)
-
-        predictions = [clss.predict(x) for x in xdev]
-
-        # Labels
-        ids = 0
-        val_labels = []
-        for sent, resA, resB in szip(dataset.dev_tokens, results_A, predictions):
-            sentence_labels = {}
-            for tok, clsA in szip(sent, resA):
-                if clsA:
-                    sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
-                    ids += 1
-            val_labels.append(sentence_labels)
-
-        # compute actual labels
-        # labels map
-        bc_labels_map = {
-            (0,0): 'None',
-            (1,1): 'None',
-            (1,0): 'Concept',
-            (0,1):  'Action'
-        }
-
-        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-            for rels, (org, dest) in szip(resC, mapC):
-                if org not in lbl or dest not in lbl:
-                    continue
-                orgid, orglbs = lbl[org]
-                destid, destlbs = lbl[dest]
-
-                orglbl = bc_labels_map[tuple(rels[-4:-2])]
-                destlbl = bc_labels_map[tuple(rels[-2:])]
-
-                if orglbl in orglbs:
-                    orglbs[orglbl] += 1
-                if destlbl in  destlbs:
-                    destlbs[destlbl] += 1
-
-        val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
-
-        # # compute relations
-        val_relations = []
-        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-            sentence_rels = []
-            for rels, (org, dest) in szip(resC, mapC):
-                if org not in lbl or dest not in lbl:
-                    continue
-                orgid, orglb = lbl[org]
-                destid, destlb = lbl[dest]
-
-                rels = dataset.relmap.inverse_transform(rels[:-4].reshape(1,-1))[0]
-                for r in rels:
-                    if r in ['subject', 'target']:
-                        if orglb == 'Action' and destlb == 'Concept':
-                            sentence_rels.append((r, orgid, destid))
-                    else:
-                        if orglb == 'Concept' and destlb == 'Concept':
-                            sentence_rels.append((r, orgid, destid))
-
-            val_relations.append(sentence_rels)
-
-        return val_labels, val_relations
-
-    def _ab(self, ind, dataset):
-        choice = ind.choose('class', 'seq')
-
-        if choice == 'class':
-            # classifier
-
-            # calcular la forma de la entrada
-            _, cols = dataset.vectors[0].shape
-            intput_shape = cols
-
-            clss, clss_type = self._class(ind, intput_shape, 3)
-
-            if clss_type == 'seq':
-                xtrain, ytrain, xdev = dataset.task_ab_by_sentence()
-            else:
-                xtrain, ytrain, xdev = dataset.task_ab_by_word()
-                xtrain = np.vstack(xtrain)
-                ytrain = np.hstack(ytrain)
-
-            clss.fit(xtrain, ytrain)
-
-            # construir la entrada dev
-            prediction = [clss.predict(x) for x in xdev]
-        else:
-            # sequence classifier
-            xtrain, ytrain, xdev = dataset.task_a_by_word()
-            prediction = self._hmm(ind, xtrain, ytrain, xdev)
-
-        # Labels
-        ids = 0
-        val_labels = []
-        for sent, resAB in szip(dataset.dev_tokens, prediction):
-            sentence_labels = {}
-            for tok, clsAB in szip(sent, resAB):
-                if clsAB:
-                    sentence_labels[(tok.init, tok.end)] = (ids, clsAB)
-                    ids += 1
-            val_labels.append(sentence_labels)
-
-        return val_labels
-
-    def _a(self, ind:Individual, dataset:TassDataset):
-        # choose between standard or sequence classifiers
-        method = ind.choose(self._class, self._hmm)
-
-        dataset = dataset.task_a()
-        train, dev = dataset.split()
-        prediction = method(ind, train, dev)
-
-        prediction = (prediction > 0.5).reshape(-1).tolist()
-        all_tokens = [token for sentence in dev.sentences for token in sentence.tokens]
-
-        for token, is_kw in szip(all_tokens, prediction):
-            token.mark_keyword(is_kw)
-
     def _hmm(self, ind:Individual, train:TassDataset, dev:TassDataset):
         train_lengths = [len(s) for s in train.sentences]
         xtrain, ytrain = train.by_word()
@@ -522,97 +681,6 @@ class TassGrammar(Grammar):
         crf.fit(xtrain, ytrain)
         return [crf.predict(x) for x in xdev]
 
-    def _b(self, ind:Individual, dataset:TassDataset, result_A):
-        # compute input shape (for neural networks)
-        _, cols = dataset.vectors[0].shape
-
-        clss, clss_type = self._class(ind, dataset, cols, cols+1, 1)
-
-        if clss_type == 'seq':
-            xtrain, ytrain, xdev = dataset.task_b_by_sentence()
-            xtrain = np.asarray(xtrain)
-            ytrain = np.asarray(ytrain)
-
-            clss.fit(xtrain, ytrain, epochs=10, validation_split=0.1)
-        else:
-            xtrain, ytrain, xdev = dataset.task_b_by_word()
-            xtrain = np.vstack(xtrain)
-            ytrain = np.hstack(ytrain)
-
-            if isinstance(clss, Model):
-                clss.fit(xtrain, ytrain, epochs=100, validation_split=0.1)
-            else:
-                clss.fit(xtrain, ytrain)
-
-        prediction = [clss.predict(x) for x in xdev]
-        prediction = [(x > 0.5).astype(int).reshape(-1) for x in prediction]
-
-        results_B = []
-
-        ymapi = ['Action', 'Concept']
-
-        for sentence, pred in szip(result_A, prediction):
-            new_sentence = {}
-            for (start, end, kw, ids), lbl in szip(sentence, pred):
-                if kw:
-                    new_sentence[(start, end)] = (ids, ymapi[lbl])
-            results_B.append(new_sentence)
-
-        return results_B
-
-    def _c(self, ind:Individual, dataset, val_labels):
-        # compute input shape (for neural networks)
-        _, cols = dataset.vectors[0].shape
-
-        clss, clss_type = self._class(ind, dataset, 2*cols, cols+2, 6)
-
-        if clss_type == 'seq':
-            xtrain, ytrain, xdev, mapping = dataset.task_c_by_sentence()
-            xtrain = np.asarray(xtrain)
-            ytrain = np.vstack(ytrain)
-
-            clss.fit(xtrain, ytrain, epochs=10, validation_split=0.1)
-        else:
-            xtrain, ytrain, xdev, mapping = dataset.task_c_by_word()
-            xtrain = np.vstack(xtrain)
-            ytrain = np.vstack(ytrain)
-
-            if isinstance(clss, Model):
-                clss.fit(xtrain, ytrain, epochs=100, validation_split=0.1)
-            else:
-                clss = OneVsRestClassifier(clss)
-                clss.fit(xtrain, ytrain)
-
-        predictions = [clss.predict(x) for x in xdev]
-        predictions = [(x > 0.5).astype(int) for x in xdev]
-
-        print(predictions)
-
-        # construir la entrada dev
-        val_relations = []
-
-        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-            sentence_rels = []
-            for rels, (org, dest) in szip(resC, mapC):
-                if org not in lbl or dest not in lbl:
-                    continue
-                orgid, orglb = lbl[org]
-                destid, destlb = lbl[dest]
-
-                print(rels)
-                rels = dataset.relmap.inverse_transform(rels.reshape(1,-1))[0]
-                for r in rels:
-                    if r in ['subject', 'target']:
-                        if orglb == 'Action' and destlb == 'Concept':
-                            sentence_rels.append((r, orgid, destid))
-                    else:
-                        if orglb == 'Concept' and destlb == 'Concept':
-                            sentence_rels.append((r, orgid, destid))
-
-            val_relations.append(sentence_rels)
-
-        return val_relations
-
     def _class(self, ind:Individual, train:TassDataset, dev:TassDataset):
         #LR | nb | SVM | dt | NN
         des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
@@ -630,6 +698,10 @@ class TassGrammar(Grammar):
             return self._nn(ind, train, dev)
 
         xtrain, ytrain = train.by_word()
+
+        if len(ytrain.shape) > 1:
+            clss = OneVsRestClassifier(clss)
+
         clss.fit(xtrain, ytrain)
 
         xdev, _ = dev.by_word()
@@ -691,9 +763,18 @@ class TassGrammar(Grammar):
             loss = 'binary_crossentropy'
             model.compile(optimizer='adam', loss=loss)
 
-            model.fit(xtrain, ytrain, validation_split=0.1)
+            is_categorical = train.predict_size != 1 and len(ytrain.shape) == 1
 
-            return model.predict(xdev)
+            if is_categorical:
+                ytrain = to_categorical(ytrain)
+
+            model.fit(xtrain, ytrain, validation_split=0.1)
+            prediction = model.predict(xdev)
+
+            if is_categorical:
+                prediction = np.argmax(prediction, axis=1)
+
+            return prediction
 
         except ValueError as e:
             msg = str(e)
@@ -797,159 +878,6 @@ class TassGrammar(Grammar):
         z = Dropout(dropout)(z)
         return z
 
-    def _repr(self, i, dataset:TassDataset):
-        # 'Prep Token SemFeat PosPrep MulWords Embed',
-        dataset = self._prep(i, dataset)
-        dataset = self._token(i, dataset)
-        dataset = self._semfeat(i, dataset)
-        dataset = self._posprep(i, dataset)
-        dataset = self._mulwords(i, dataset)
-        dataset = self._embed(i, dataset)
-
-        return dataset
-
-    def _prep(self, i, dataset:TassDataset):
-        #'DelPunt StripAcc'
-        dataset = self._delpunt(i, dataset)
-        return self._stripacc(i, dataset)
-
-    def _delpunt(self, i, dataset:TassDataset):
-        #yes | no
-        if i.nextbool():
-            for sentence in dataset.sentences:
-                sentence.text = sentence.text.translate({c:" " for c in string.punctuation})
-
-        return dataset
-
-    def _stripacc(self, i, dataset:TassDataset):
-        #yes | no
-        if i.nextbool():
-            for sentence in dataset.sentences:
-                sentence.text = gensim.utils.deaccent(sentence.text)
-
-        return dataset
-
-    def _token(self, i, dataset:TassDataset):
-        ids = 0
-
-        for sentence in dataset.sentences:
-            for token in self.spacy_nlp(sentence.text):
-                features = dict(
-                    norm=token.norm_,
-                    pos=token.pos_,
-                    tag=token.tag_,
-                    dep=token.dep_,
-                    vector=token.vector
-                )
-                start = token.idx
-                end = start + len(token.text)
-                match = sentence.find_keyphrase(start=start, end=end)
-                label = match.label if match else ''
-                keyword = Keyphrase(sentence, features, label, ids, start, end)
-                ids += 1
-
-                sentence.tokens.append(keyword)
-
-        return dataset
-
-    def _posprep(self, i, dataset):
-        self._stopw(i, dataset)
-        self._stem(i, dataset)
-
-        return dataset
-
-    def _stem(self, i, dataset:TassDataset):
-        if i.nextbool():
-            for sentence in dataset.sentences:
-                for token in sentence.tokens:
-                    token.features['norm'] = self.stemmer.stem(token.features['norm'])
-
-    def _stopw(self, i, dataset:TassDataset):
-        if i.nextbool():
-            sw = set(stopwords.words('spanish'))
-        else:
-            sw = set()
-
-        for sentence in dataset.sentences:
-            sentence.tokens = [t for t in sentence.tokens if t.features['norm'] not in sw]
-
-    def _semfeat(self, i, dataset:TassDataset):
-        # incluir pos-tag?
-        if not i.nextbool():
-            for sentence in dataset.sentences:
-                for token in sentence.tokens:
-                    token.features.pop('pos')
-                    token.features.pop('tag')
-
-        # incluir dependencias
-        if not i.nextbool():
-            for sentence in dataset.sentences:
-                for token in sentence.tokens:
-                    token.features.pop('dep')
-
-        self._umls(i, dataset)
-        self._snomed(i, dataset)
-
-        return dataset
-
-    def _umls(self, i, dataset:TassDataset):
-        warnings.warn("UMLS not implemented yet")
-
-        if i.nextbool():
-            return True
-
-    def _snomed(self, i, dataset:TassDataset):
-        warnings.warn("SNOMED not implemented yet")
-
-        if i.nextbool():
-            return True
-
-    def _mulwords(self, i, tokens):
-        warnings.warn("MultiWords not implemented yet")
-
-        #'MulWords' : 'countPhrase | freeling | Ngram',
-        choice = i.choose('countPhrase', 'freeling', 'Ngram')
-
-        if choice == 'Ngram':
-            ngram = i.nextint()
-
-        return tokens
-
-    def _embed(self, i, dataset:TassDataset):
-        # 'Embed' : 'wordVec | onehot | none',
-        choice = i.choose('wv', 'onehot', 'none')
-
-        # train the dict-vectorizer in the relevant features
-        feature_dicts = [dict(token.features) for sentence in dataset.sentences for token in sentence.tokens]
-
-        if choice == 'wv' or choice == 'none':
-            # remove text *and* vector
-            for d in feature_dicts:
-                d.pop('vector')
-                d.pop('norm')
-        elif choice == 'onehot':
-            # remove only vector
-            for d in feature_dicts:
-                d.pop('vector')
-
-        vectorizer = DictVectorizer().fit(feature_dicts)
-
-        # now we vectorize
-        for sentence in dataset.sentences:
-            for token in sentence.tokens:
-                # save the vw vector for later
-
-                vector = token.features['vector']
-                features = vectorizer.transform([token.features]).toarray().flatten()
-
-                # now maybe reuse that wv
-                if choice == 'wv':
-                    features = np.hstack((vector, features))
-
-                token.features = features
-
-        return dataset
-
 
 def main():
     grammar = TassGrammar()
@@ -963,8 +891,8 @@ def main():
         try:
             assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
             sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
-            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
-            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
+            sample['Pipeline'][2]['BC'][0]['Class'][0]['LR']
+            # sample['Pipeline'][3]['C'][0]['Class'][0]['NN']
         except:
             continue
 
