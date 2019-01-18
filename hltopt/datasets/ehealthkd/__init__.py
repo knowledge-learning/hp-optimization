@@ -22,7 +22,7 @@ def cached(func):
 class TassDataset:
     def __init__(self, sentences=None, validation_size=0):
         self.sentences = sentences or []
-        self.validation_size = 0
+        self.validation_size = validation_size
 
         # self.texts = []
         # self.labels = []
@@ -33,6 +33,12 @@ class TassDataset:
 
     def clone(self):
         return TassDataset([s.clone() for s in self.sentences], self.validation_size)
+
+    def by_word(self):
+        raise NotImplementedError("Need to specialize dataset for a task first.")
+
+    def by_sentence(self):
+        raise NotImplementedError("Need to specialize dataset for a task first.")
 
     def __len__(self):
         return len(self.sentences)
@@ -93,70 +99,19 @@ class TassDataset:
     def feature_size(self):
         return self.sentences[0].tokens[0].features.shape[0]
 
-    # def _check_repr(self):
-    #     if self.vectors is None or self.tokens is None:
-    #         raise ValueError("Preprocesing and representation is not ready yet.")
-
-    #     self.labels_map = self._labels_map()
-
-    #     for v, t, l, s in szip(self.vectors, self.tokens, self.labels_map, self.texts):
-    #         assert len(v) == len(t) == len(l)
-
-    #     self.max_length = max(map(lambda n: n.shape[0], self.vectors))
-
-    # def _labels_map(self):
-    #     print("(!) Computing labels mapping for dataset")
-    #     labels_map = []
-
-    #     for sent, lbls in szip(self.tokens, self.labels):
-    #         sent_map = []
-    #         for t in sent:
-    #             if (t.init, t.end) in lbls:
-    #                 lbl = lbls[(t.init, t.end)][1]
-    #                 sent_map.append(lbl)
-    #             else:
-    #                 sent_map.append('')
-
-    #         labels_map.append(sent_map)
-
-    #     return labels_map
-
     def split(self):
         train = TassDataset(self.sentences[:-self.validation_size])
         dev = TassDataset(self.sentences[-self.validation_size:])
         return train, dev
 
-    # @property
-    # def train_vectors(self):
-    #     return self.train(self.vectors)
+    def task_a(self):
+        return TaskADataset(self)
 
-    # @property
-    # def dev_vectors(self):
-    #     return self.dev(self.vectors)
+    def task_b(self):
+        return TaskBDataset(self)
 
-    # @property
-    # def train_tokens(self):
-    #     return self.train(self.tokens)
-
-    # @property
-    # def dev_tokens(self):
-    #     return self.dev(self.tokens)
-
-    # @property
-    # def train_labels(self):
-    #     return self.train(self.labels)
-
-    # @property
-    # def train_relations(self):
-    #     return self.train(self.relations)
-
-    # @property
-    # def dev_labels(self):
-    #     return self.dev(self.labels)
-
-    # @property
-    # def dev_relations(self):
-    #     return self.dev(self.relations)
+    def task_c(self):
+        return TaskCDataset(self)
 
     def task_a_by_word(self):
         self._check_repr()
@@ -576,6 +531,51 @@ class TassDataset:
         return xtrain, ytrain, xdev, mapping
 
 
+class TaskADataset(TassDataset):
+    def __init__(self, dataset:TassDataset):
+        self.sentences = dataset.sentences
+        self.validation_size = dataset.validation_size
+
+    def clone(self):
+        raise NotImplementedError("It is unsafe to clone a specialized dataset!")
+
+    def split(self):
+        train, dev = super().split()
+
+        train = TaskADataset(train)
+        dev = TaskADataset(dev)
+
+        return train, dev
+
+    @property
+    def predict_size(self):
+        return 1
+
+    def by_word(self):
+        X = []
+        y = []
+
+        for sentence in self.sentences:
+            for token in sentence.tokens:
+                X.append(token.features)
+                y.append(token.binary_label)
+
+        return np.vstack(X), np.hstack(y)
+
+    def by_sentence(self):
+        max_length = max(len(s) for s in self.sentences)
+
+        X = []
+        y = []
+
+        for sentence in self.sentences:
+            for i, token in enumerate(sentence.tokens):
+                X.append(sentence.token_features(i, max_length))
+                y.append(token.binary_label)
+
+        return np.asarray(X), np.hstack(y)
+
+
 class Keyphrase:
     def __init__(self, sentence, features, label, id, start, end):
         self.sentence = sentence
@@ -591,6 +591,16 @@ class Keyphrase:
     @property
     def text(self) -> str:
         return self.sentence.text[self.start:self.end]
+
+    @property
+    def binary_label(self) -> int:
+        return 0 if self.label == '' else 1
+
+    def mark_keyword(self, value):
+        if hasattr(self, 'is_kw'):
+            raise ValueError("Already marked!")
+
+        self.is_kw = value
 
     def __repr__(self):
         return "Keyphrase(text=%r, label=%r)" % (self.text, self.label)
@@ -659,6 +669,27 @@ class Sentence:
                 return k
 
         return None
+
+    def token_features(self, index:int, max_length:int):
+        X = []
+
+        for token in self.tokens:
+            X.append(token.features)
+
+        X = np.asarray(X)
+        padding = max_length - len(X)
+
+        if padding > 0:
+            _, cols = X.shape
+            X = np.vstack((X, np.zeros((padding, cols))))
+
+        idxcols = np.zeros((max_length, 1))
+        idxcols[index, 0] = 1.0
+
+        return np.hstack((X, idxcols))
+
+    def __len__(self):
+        return len(self.tokens)
 
     def __repr__(self):
         return "Sentence(text=%r, keyphrases=%r, relations=%r, tokens=%r)" % (self.text, self.keyphrases, self.relations, self.tokens)

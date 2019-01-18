@@ -36,6 +36,7 @@ from nltk.corpus import stopwords
 
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense, Activation, Dropout, Conv1D, MaxPooling1D, Embedding, LSTM, Input, concatenate
+# from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
 
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
 from ..datasets.ehealthkd import TassDataset, Keyphrase, Relation
@@ -172,25 +173,24 @@ class TassGrammar(Grammar):
         choice = ind.choose('A B C', 'AB C', 'A BC', 'ABC')
 
         dataset = self._repr(ind, dataset)
-        train, dev = dataset.split()
 
         try:
             if choice == 'A B C':
                 # Ejecutar tareas A, B y C en secuencia
-                result_A = self._a(ind, train, dev)
-                val_labels = self._b(ind, train, dev, result_A)
-                val_relations = self._c(ind, train, dev, val_labels)
+                result_A = self._a(ind, dataset)
+                val_labels = self._b(ind, dataset, result_A)
+                val_relations = self._c(ind, dataset, val_labels)
             elif choice == 'AB C':
                 # Ejecutar tareas AB juntas y C en secuencia
-                val_labels = self._ab(ind, train, dev)
-                val_relations = self._c(ind, train, dev, val_labels)
+                val_labels = self._ab(ind, dataset)
+                val_relations = self._c(ind, dataset, val_labels)
             elif choice == 'A BC':
                 # Ejecutar tarea A y luego BC
-                results_A = self._a(ind, train, dev)
-                val_labels, val_relations = self._bc(ind, train, dev, results_A)
+                results_A = self._a(ind, dataset)
+                val_labels, val_relations = self._bc(ind, dataset, results_A)
             else:
                 # Ejecutar Tarea ABC junta
-                val_labels, val_relations = self._abc(ind, train, dev)
+                val_labels, val_relations = self._abc(ind, dataset)
 
             return self._score(dataset.dev_labels, val_labels, dataset.dev_relations, val_relations)
         except ValueError as e:
@@ -479,63 +479,34 @@ class TassGrammar(Grammar):
 
         return val_labels
 
-    def _a(self, ind:Individual, train:TassDataset, dev:TassDataset):
-        choice = ind.choose('class', 'seq')
+    def _a(self, ind:Individual, dataset:TassDataset):
+        # choose between standard or sequence classifiers
+        method = ind.choose(self._class, self._hmm)
 
-        if choice == 'class':
-            # classifier
+        dataset = dataset.task_a()
+        train, dev = dataset.split()
+        prediction = method(ind, train, dev)
 
-            # calcular la forma de la entrada
-            cols = train.feature_size
+        prediction = (prediction > 0.5).reshape(-1).tolist()
+        all_tokens = [token for sentence in dev.sentences for token in sentence.tokens]
 
-            clss, clss_type = self._class(ind, dataset, cols, cols+1, 1)
+        for token, is_kw in szip(all_tokens, prediction):
+            token.mark_keyword(is_kw)
 
-            if clss_type == 'seq':
-                xtrain, ytrain, xdev = dataset.task_a_by_sentence()
-                xtrain = np.asarray(xtrain)
-                ytrain = np.asarray(ytrain)
+    def _hmm(self, ind:Individual, train:TassDataset, dev:TassDataset):
+        train_lengths = [len(s) for s in train.sentences]
+        xtrain, ytrain = train.by_word()
 
-                clss.fit(xtrain, ytrain, epochs=10, validation_split=0.1)
-            else:
-                xtrain, ytrain, xdev = dataset.task_a_by_word()
-                xtrain = np.vstack(xtrain)
-                ytrain = np.hstack(ytrain)
-
-                if isinstance(clss, Model):
-                    clss.fit(xtrain, ytrain, epochs=100, validation_split=0.1)
-                else:
-                    clss.fit(xtrain, ytrain)
-
-            prediction = [clss.predict(x) for x in xdev]
-            prediction = [(x > 0.5).astype(int).reshape(-1) for x in prediction]
-        else:
-            # sequence classifier
-            xtrain, ytrain, xdev = dataset.task_a_by_word()
-            prediction = self._hmm(ind, xtrain, ytrain, xdev)
-
-        results = []
-        ids = 0
-
-        for sentence, pred in szip(dataset.dev_tokens, prediction):
-            new_sentence = []
-            for token, r in szip(sentence, pred):
-                ids += 1
-                new_sentence.append((token.init, token.end, r==1, ids))
-            results.append(new_sentence)
-
-        return results
-
-    def _hmm(self, ind:Individual, xtrain, ytrain, xdev):
-        lengths = [x.shape[0] for x in xtrain]
-
-        xtrain = np.vstack(xtrain).astype(int)
-        ytrain = np.hstack(ytrain)
+        xdev, _ = dev.by_word()
+        dev_lengths = [len(s) for s in dev.sentences]
 
         try:
-            hmm = MultinomialHMM(decode=ind.choose('viterbi', 'bestfirst'), alpha=ind.nextfloat())
-            hmm.fit(xtrain, ytrain, lengths)
-            xdev = [x.astype(int) for x in xdev]
-            return [hmm.predict(x) for x in xdev]
+            hmm = MultinomialHMM(decode=ind.choose('viterbi', 'bestfirst'),
+                                 alpha=ind.nextfloat())
+            hmm.fit(xtrain, ytrain, train_lengths)
+
+            return hmm.predict(xdev, dev_lengths)
+
         except ValueError as e:
             if 'non-negative integers' in str(e):
                 raise InvalidPipeline(str(e))
@@ -642,7 +613,7 @@ class TassGrammar(Grammar):
 
         return val_relations
 
-    def _class(self, ind:Individual, dataset, word_input_size=None, seq_input_size=None, output_shape_size=None):
+    def _class(self, ind:Individual, train:TassDataset, dev:TassDataset):
         #LR | nb | SVM | dt | NN
         des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
         clss = None
@@ -656,9 +627,13 @@ class TassGrammar(Grammar):
         elif des == 'dt':
             clss = DecisionTreeClassifier()
         else:
-            return self._nn(ind, dataset, word_input_size, seq_input_size, output_shape_size)
+            return self._nn(ind, train, dev)
 
-        return clss, 'word'
+        xtrain, ytrain = train.by_word()
+        clss.fit(xtrain, ytrain)
+
+        xdev, _ = dev.by_word()
+        return clss.predict(xdev)
 
     def _lr(self, i):
         return LogisticRegression(C=self._reg(i), penalty=self._penalty(i))
@@ -676,37 +651,50 @@ class TassGrammar(Grammar):
         #linear | rbf | poly
         return i.choose('linear', 'rbf', 'poly')
 
-    def _nn(self, i, dataset, word_input_size, seq_input_size, output_size):
+    def _nn(self, ind:Individual, train:TassDataset, dev:TassDataset):
         try:
             # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
             model = Sequential()
-            option = i.choose('conv', 'rec', 'deep')
+            option = ind.choose('conv', 'rec', 'deep')
 
-            dropout = self._drop(i)
-            clss_type = 'seq'
+            dropout = self._drop(ind)
 
+            # The input representation depends on the kind of network
             if option == 'conv':
-                x = Input(shape=(dataset.max_length, seq_input_size))
-                y = self._cvlayers(i, x, dropout)
-                y = self._dlayers(i, y, dropout)
-                y = self._flayer(i, y, output_size, dropout)
+                xtrain, ytrain = train.by_sentence()
+                xdev, _ = dev.by_sentence()
+
+                x = Input(shape=xtrain[0].shape)
+                y = self._cvlayers(ind, x, dropout)
+                y = self._dlayers(ind, y, dropout)
+                y = self._flayer(ind, y, train.predict_size, dropout)
+
             elif option == 'rec':
-                x = Input(shape=(dataset.max_length, seq_input_size))
-                y = self._rlayers(i, x, dropout)
-                y = self._dlayers(i, y, dropout)
-                y = self._flayer(i, y, output_size, dropout)
+                xtrain, ytrain = train.by_sentence()
+                xdev, _ = dev.by_sentence()
+
+                x = Input(shape=xtrain[0].shape)
+                y = self._rlayers(ind, x, dropout)
+                y = self._dlayers(ind, y, dropout)
+                y = self._flayer(ind, y, train.predict_size, dropout)
+
             else:
-                clss_type = 'word'
-                x = Input(shape=(word_input_size,))
-                y = self._dlayers(i, x, dropout)
-                y = self._flayer(i, y, output_size, dropout)
+                xtrain, ytrain = train.by_word()
+                xdev, _ = dev.by_word()
+
+                x = Input(shape=xtrain[0].shape)
+                y = self._dlayers(ind, x, dropout)
+                y = self._flayer(ind, y, train.predict_size, dropout)
 
             model = Model(inputs=x, outputs=y)
 
             loss = 'binary_crossentropy'
             model.compile(optimizer='adam', loss=loss)
 
-            return model, clss_type
+            model.fit(xtrain, ytrain, validation_split=0.1)
+
+            return model.predict(xdev)
+
         except ValueError as e:
             msg = str(e)
             if 'out of bounds' in msg:
