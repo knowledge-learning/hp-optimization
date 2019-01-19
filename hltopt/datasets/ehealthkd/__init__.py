@@ -22,14 +22,14 @@ def cached(func):
 relation_mapper = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
 
 
-class TassDataset:
+class Dataset:
     def __init__(self, sentences=None, validation_size=0, max_length=0):
         self.sentences = sentences or []
         self.validation_size = validation_size
         self.max_length = max_length
 
     def clone(self):
-        return TassDataset([s.clone() for s in self.sentences], self.validation_size)
+        return Dataset([s.clone() for s in self.sentences], self.validation_size)
 
     def by_word(self):
         raise NotImplementedError("Need to specialize dataset for a task first.")
@@ -98,10 +98,10 @@ class TassDataset:
         return self.sentences[0].tokens[0].features.shape[0]
 
     def split(self):
-        train = TassDataset(self.sentences[:-self.validation_size], max_length=self.max_length)
-        dev = TassDataset(self.sentences[-self.validation_size:], max_length=self.max_length)
+        train = Dataset(self.sentences[:-self.validation_size], max_length=self.max_length)
+        dev = Dataset(self.sentences[-self.validation_size:], max_length=self.max_length)
 
-        if self.__class__ != TassDataset:
+        if self.__class__ != Dataset:
             train = self.__class__(train)
             dev = self.__class__(dev)
 
@@ -137,9 +137,11 @@ class TassDataset:
     def task_bc(self):
         return TaskBCDataset(self)
 
+    def task_abc(self):
+        return TaskABCDataset(self)
 
-class TaskADataset(TassDataset):
-    def __init__(self, dataset:TassDataset):
+class TaskADataset(Dataset):
+    def __init__(self, dataset:Dataset):
         self.sentences = dataset.sentences
         self.validation_size = dataset.validation_size
         self.max_length = dataset.max_length
@@ -174,8 +176,8 @@ class TaskADataset(TassDataset):
         return np.asarray(X), np.hstack(y)
 
 
-class TaskBDataset(TassDataset):
-    def __init__(self, dataset:TassDataset):
+class TaskBDataset(Dataset):
+    def __init__(self, dataset:Dataset):
         self.sentences = dataset.sentences
         self.validation_size = dataset.validation_size
         self.max_length = dataset.max_length
@@ -212,8 +214,8 @@ class TaskBDataset(TassDataset):
         return np.asarray(X), np.hstack(y)
 
 
-class TaskCDataset(TassDataset):
-    def __init__(self, dataset:TassDataset):
+class TaskCDataset(Dataset):
+    def __init__(self, dataset:Dataset):
         self.sentences = dataset.sentences
         self.validation_size = dataset.validation_size
         self.max_length = dataset.max_length
@@ -258,8 +260,8 @@ class TaskCDataset(TassDataset):
         return np.asarray(X), np.vstack(y)
 
 
-class TaskABDataset(TassDataset):
-    def __init__(self, dataset:TassDataset):
+class TaskABDataset(Dataset):
+    def __init__(self, dataset:Dataset):
         self.sentences = dataset.sentences
         self.validation_size = dataset.validation_size
         self.max_length = dataset.max_length
@@ -294,8 +296,8 @@ class TaskABDataset(TassDataset):
         return np.asarray(X), np.hstack(y)
 
 
-class TaskBCDataset(TassDataset):
-    def __init__(self, dataset:TassDataset):
+class TaskBCDataset(Dataset):
+    def __init__(self, dataset:Dataset):
         self.sentences = dataset.sentences
         self.validation_size = dataset.validation_size
         self.max_length = dataset.max_length
@@ -331,9 +333,64 @@ class TaskBCDataset(TassDataset):
         y = []
 
         for i, j, k1, k2 in self.token_pairs(enums=True):
+            labels = np.asarray([k1.binary_label, k2.binary_label])
+
             relations = k1.sentence.find_relations(k1.id, k2.id)
             relation_labels = {r.label:True for r in relations}
             relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+            relation_vector = np.hstack((relation_vector, labels))
+
+            feature_vector = k1.sentence.token_features(self.max_length, i, j)
+
+            X.append(feature_vector)
+            y.append(relation_vector)
+
+        return np.asarray(X), np.vstack(y)
+
+
+class TaskABCDataset(Dataset):
+    def __init__(self, dataset:Dataset):
+        self.sentences = dataset.sentences
+        self.validation_size = dataset.validation_size
+        self.max_length = dataset.max_length
+
+    def clone(self):
+        raise NotImplementedError("It is unsafe to clone a specialized dataset!")
+
+    @property
+    def predict_size(self):
+        return 10
+
+    def by_word(self):
+        X = []
+        y = []
+
+        for k1, k2 in self.token_pairs():
+            labels = np.asarray([k1.keyword_label, k1.binary_label, k2.keyword_label, k2.binary_label])
+
+            relations = k1.sentence.find_relations(k1.id, k2.id)
+            relation_labels = {r.label:True for r in relations}
+            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+            relation_vector = np.hstack((relation_vector, labels))
+
+            feature_vector = np.hstack((k1.features, k2.features))
+
+            X.append(feature_vector)
+            y.append(relation_vector)
+
+        return np.vstack(X), np.vstack(y)
+
+    def by_sentence(self):
+        X = []
+        y = []
+
+        for i, j, k1, k2 in self.token_pairs(enums=True):
+            labels = np.asarray([k1.keyword_label, k1.binary_label, k2.keyword_label, k2.binary_label])
+
+            relations = k1.sentence.find_relations(k1.id, k2.id)
+            relation_labels = {r.label:True for r in relations}
+            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+            relation_vector = np.hstack((relation_vector, labels))
 
             feature_vector = k1.sentence.token_features(self.max_length, i, j)
 
@@ -351,6 +408,9 @@ class Keyphrase:
         self.id = id
         self.start = start
         self.end = end
+
+        self._all_keywords = []
+        self._all_labels = []
 
     def clone(self, sentence):
         return Keyphrase(sentence, self.features, self.label, self.id, self.start, self.end)
@@ -375,7 +435,20 @@ class Keyphrase:
         if hasattr(self, 'is_kw'):
             raise ValueError("Already marked!")
 
-        self.is_kw = value
+        self.is_kw = bool(value)
+
+    def add_keyword_mark(self, value):
+        if hasattr(self, 'is_kw'):
+            raise ValueError("Already marked!")
+
+        self._all_keywords.append(int(value))
+
+    def finish_keyword_mark(self):
+        if not self._all_keywords:
+            return
+
+        self.mark_keyword(np.mean(self._all_keywords) > 0.5)
+        self._all_keywords.clear()
 
     def mark_label(self, value):
         if not hasattr(self, 'is_kw'):
@@ -385,6 +458,16 @@ class Keyphrase:
             value = ['Action', 'Concept'][value]
 
         self.label = value if self.is_kw else ''
+
+    def add_label_mark(self, value):
+        self._all_labels.append(int(value))
+
+    def finish_label_mark(self):
+        if not self._all_labels:
+            return
+
+        self.mark_label(int(np.mean(self._all_labels)))
+        self._all_labels.clear()
 
     def mark_ternary(self, value):
         if hasattr(self, 'is_kw'):

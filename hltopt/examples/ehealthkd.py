@@ -40,7 +40,7 @@ from tensorflow.keras.utils import to_categorical
 # from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
 
 from ..ge import Grammar, PGE, Individual, InvalidPipeline
-from ..datasets.ehealthkd import TassDataset, Keyphrase, Relation, relation_mapper
+from ..datasets.ehealthkd import Dataset, Keyphrase, Relation, relation_mapper
 
 from ..utils import szip, sdiv
 
@@ -148,7 +148,7 @@ class TassGrammar(Grammar):
 
         # load training data
         dataset_path = Path.cwd() / 'hltopt' / 'datasets' / 'ehealthkd'
-        dataset = TassDataset()
+        dataset = Dataset()
 
         for file in (dataset_path / 'training').iterdir():
             if file.name.startswith('input'):
@@ -200,7 +200,7 @@ class TassGrammar(Grammar):
             else:
                 raise e
 
-    def _score(self, dataset:TassDataset):
+    def _score(self, dataset:Dataset):
         # assert len(train_labels) == len(val_labels)
         # assert len(train_relations) == len(val_relations)
 
@@ -265,7 +265,7 @@ class TassGrammar(Grammar):
 
         return sdiv(2 * precision * recall, precision + recall)
 
-    def _repr(self, i, dataset:TassDataset):
+    def _repr(self, i, dataset:Dataset):
         # 'Prep Token SemFeat PosPrep MulWords Embed',
         dataset = self._prep(i, dataset)
         dataset = self._token(i, dataset)
@@ -276,12 +276,12 @@ class TassGrammar(Grammar):
 
         return dataset
 
-    def _prep(self, i, dataset:TassDataset):
+    def _prep(self, i, dataset:Dataset):
         #'DelPunt StripAcc'
         dataset = self._delpunt(i, dataset)
         return self._stripacc(i, dataset)
 
-    def _delpunt(self, i, dataset:TassDataset):
+    def _delpunt(self, i, dataset:Dataset):
         #yes | no
         if i.nextbool():
             for sentence in dataset.sentences:
@@ -289,7 +289,7 @@ class TassGrammar(Grammar):
 
         return dataset
 
-    def _stripacc(self, i, dataset:TassDataset):
+    def _stripacc(self, i, dataset:Dataset):
         #yes | no
         if i.nextbool():
             for sentence in dataset.sentences:
@@ -297,7 +297,7 @@ class TassGrammar(Grammar):
 
         return dataset
 
-    def _token(self, i, dataset:TassDataset):
+    def _token(self, i, dataset:Dataset):
         ids = max(k.id for sentence in dataset.sentences for k in sentence.keyphrases) * 10
 
         for sentence in dataset.sentences:
@@ -333,13 +333,13 @@ class TassGrammar(Grammar):
 
         return dataset
 
-    def _stem(self, i, dataset:TassDataset):
+    def _stem(self, i, dataset:Dataset):
         if i.nextbool():
             for sentence in dataset.sentences:
                 for token in sentence.tokens:
                     token.features['norm'] = self.stemmer.stem(token.features['norm'])
 
-    def _stopw(self, i, dataset:TassDataset):
+    def _stopw(self, i, dataset:Dataset):
         if i.nextbool():
             sw = set(stopwords.words('spanish'))
         else:
@@ -348,7 +348,7 @@ class TassGrammar(Grammar):
         for sentence in dataset.sentences:
             sentence.tokens = [t for t in sentence.tokens if t.features['norm'] not in sw]
 
-    def _semfeat(self, i, dataset:TassDataset):
+    def _semfeat(self, i, dataset:Dataset):
         # incluir pos-tag?
         if not i.nextbool():
             for sentence in dataset.sentences:
@@ -367,13 +367,13 @@ class TassGrammar(Grammar):
 
         return dataset
 
-    def _umls(self, i, dataset:TassDataset):
+    def _umls(self, i, dataset:Dataset):
         warnings.warn("UMLS not implemented yet")
 
         if i.nextbool():
             return True
 
-    def _snomed(self, i, dataset:TassDataset):
+    def _snomed(self, i, dataset:Dataset):
         warnings.warn("SNOMED not implemented yet")
 
         if i.nextbool():
@@ -390,7 +390,7 @@ class TassGrammar(Grammar):
 
         return tokens
 
-    def _embed(self, i, dataset:TassDataset):
+    def _embed(self, i, dataset:Dataset):
         # 'Embed' : 'wordVec | onehot | none',
         choice = i.choose('wv', 'onehot', 'none')
 
@@ -426,7 +426,7 @@ class TassGrammar(Grammar):
         return dataset
 
 
-    def _a(self, ind:Individual, dataset:TassDataset):
+    def _a(self, ind:Individual, dataset:Dataset):
         # choose between standard or sequence classifiers
         method = ind.choose(self._class, self._hmm)
 
@@ -440,7 +440,7 @@ class TassGrammar(Grammar):
         for token, is_kw in szip(all_tokens, prediction):
             token.mark_keyword(is_kw)
 
-    def _b(self, ind:Individual, dataset:TassDataset):
+    def _b(self, ind:Individual, dataset:Dataset):
         dataset = dataset.task_b()
         train, dev = dataset.split()
 
@@ -451,7 +451,7 @@ class TassGrammar(Grammar):
         for token, label in szip(all_tokens, prediction):
             token.mark_label(label)
 
-    def _c(self, ind:Individual, dataset:TassDataset):
+    def _c(self, ind:Individual, dataset:Dataset):
         dataset = dataset.task_c()
         train, dev = dataset.split()
 
@@ -486,173 +486,40 @@ class TassGrammar(Grammar):
 
         for (k1, k2), relations in szip(all_token_pairs, prediction):
             relations, l1, l2 = np.split(relations, [6,7])
-            print(relations, l1, l2)
-            k1.mark_label(l1[0])
-            k2.mark_label(l2[0])
+            k1.add_label_mark(l1[0])
+            k2.add_label_mark(l2[0])
+
+        for (k1, k2), relations in szip(all_token_pairs, prediction):
+            relations, l1, l2 = np.split(relations, [6,7])
+            k1.finish_label_mark()
+            k2.finish_label_mark()
             k1.sentence.add_predicted_relations(k1, k2, relations)
 
-        # calcular la forma de la entrada
-        # _, cols = dataset.vectors[0].shape
-        # intput_shape = cols
-        # output_shape = 10
-
-        # clss, clss_type = self._class(ind, intput_shape, output_shape)
-
-        # if clss_type == 'seq':
-        #     xtrain, ytrain, xdev, mapping = dataset.task_bc_by_sentence()
-        # else:
-        #     xtrain, ytrain, xdev, mapping = dataset.task_bc_by_word()
-        #     clss = OneVsRestClassifier(clss)
-        #     xtrain = np.vstack(xtrain)
-        #     ytrain = np.vstack(ytrain)
-
-        # clss.fit(xtrain, ytrain)
-
-        # predictions = [clss.predict(x) for x in xdev]
-
-        # # Labels
-        # ids = 0
-        # val_labels = []
-        # for sent, resA, resB in szip(dataset.dev_tokens, results_A, predictions):
-        #     sentence_labels = {}
-        #     for tok, clsA in szip(sent, resA):
-        #         if clsA:
-        #             sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0})
-        #             ids += 1
-        #     val_labels.append(sentence_labels)
-
-        # # compute actual labels
-        # # labels map
-        # bc_labels_map = {
-        #     (0,0): 'None',
-        #     (1,1): 'None',
-        #     (1,0): 'Concept',
-        #     (0,1):  'Action'
-        # }
-
-        # for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-        #     for rels, (org, dest) in szip(resC, mapC):
-        #         if org not in lbl or dest not in lbl:
-        #             continue
-        #         orgid, orglbs = lbl[org]
-        #         destid, destlbs = lbl[dest]
-
-        #         orglbl = bc_labels_map[tuple(rels[-4:-2])]
-        #         destlbl = bc_labels_map[tuple(rels[-2:])]
-
-        #         if orglbl in orglbs:
-        #             orglbs[orglbl] += 1
-        #         if destlbl in  destlbs:
-        #             destlbs[destlbl] += 1
-
-        # val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
-
-        # # # compute relations
-        # val_relations = []
-        # for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-        #     sentence_rels = []
-        #     for rels, (org, dest) in szip(resC, mapC):
-        #         if org not in lbl or dest not in lbl:
-        #             continue
-        #         orgid, orglb = lbl[org]
-        #         destid, destlb = lbl[dest]
-
-        #         rels = dataset.relmap.inverse_transform(rels[:-4].reshape(1,-1))[0]
-        #         for r in rels:
-        #             if r in ['subject', 'target']:
-        #                 if orglb == 'Action' and destlb == 'Concept':
-        #                     sentence_rels.append((r, orgid, destid))
-        #             else:
-        #                 if orglb == 'Concept' and destlb == 'Concept':
-        #                     sentence_rels.append((r, orgid, destid))
-
-        #     val_relations.append(sentence_rels)
-
-        # return val_labels, val_relations
-
     def _abc(self, ind, dataset):
-        # calcular la forma de la entrada
-        _, cols = dataset.vectors[0].shape
-        intput_shape = cols
-        output_shape = 10
+        dataset = dataset.task_abc()
+        train, dev = dataset.split()
+        prediction = self._class(ind, train, dev)
+        prediction = (prediction > 0.5).astype(int)
 
-        clss, clss_type = self._class(ind, intput_shape, output_shape)
+        all_token_pairs = list(dev.token_pairs())
 
-        if clss_type == 'seq':
-            xtrain, ytrain, xdev, mapping = dataset.task_abc_by_sentence()
-        else:
-            xtrain, ytrain, xdev, mapping = dataset.task_abc_by_word()
-            xtrain = np.vstack(xtrain)
-            ytrain = np.vstack(ytrain)
+        for (k1, k2), relations in szip(all_token_pairs, prediction):
+            relations, kw1, l1, kw2, l2 = np.split(relations, [6,7,8,9])
+            k1.add_keyword_mark(kw1[0])
+            k1.add_label_mark(l1[0])
+            k2.add_keyword_mark(kw2[0])
+            k2.add_label_mark(l2[0])
+            k1.sentence.add_predicted_relations(k1, k2, relations)
 
-            if isinstance(clss, Model):
-                clss.fit(xtrain, ytrain, epochs=100)
-            else:
-                clss = OneVsRestClassifier(clss)
-                clss.fit(xtrain, ytrain)
+        for (k1, k2), relations in szip(all_token_pairs, prediction):
+            relations, kw1, l1, kw2, l2 = np.split(relations, [6,7,8,9])
+            k1.finish_keyword_mark()
+            k2.finish_keyword_mark()
+            k1.finish_label_mark()
+            k2.finish_label_mark()
+            k1.sentence.add_predicted_relations(k1, k2, relations)
 
-        predictions = [clss.predict(x) for x in xdev]
-        predictions = [(x > 0.5).astype(int) for x in xdev]
-
-        # Ids
-        ids = 0
-        val_labels = []
-        for sent in dataset.dev_tokens:
-            sentence_labels = {}
-            for tok in sent:
-                sentence_labels[(tok.init, tok.end)] = (ids, {'Concept':0, 'Action':0, 'None':0})
-                ids += 1
-            val_labels.append(sentence_labels)
-
-        # labels map
-        bc_labels_map = {
-            (0,0): 'None',
-            (1,0): 'Concept',
-            (0,1): 'Action',
-            (1,1): 'None'
-        }
-
-        # Labels
-        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-            for rels, (org, dest) in szip(resC, mapC):
-                if org not in lbl or dest not in lbl:
-                    continue
-                orgid, orglbs = lbl[org]
-                destid, destlbs = lbl[dest]
-
-                orglbl = bc_labels_map[tuple(rels[-4:-2])]
-                destlbl = bc_labels_map[tuple(rels[-2:])]
-
-                orglbs[orglbl] += 1
-                destlbs[destlbl] += 1
-
-        val_labels = [{ tok: (ids, max(lbl, key=lbl.get)) for tok, (ids,lbl) in sent.items()} for sent in val_labels]
-        val_labels = [{ tok: (ids, lbl) for tok, (ids,lbl) in sent.items() if lbl != 'None'} for sent in val_labels]
-
-        # Relations
-        val_relations = []
-        for lbl, resC, mapC in szip(val_labels, predictions, mapping):
-            sentence_rels = []
-            for rels, (org, dest) in szip(resC, mapC):
-                if org not in lbl or dest not in lbl:
-                    continue
-                orgid, orglb = lbl[org]
-                destid, destlb = lbl[dest]
-
-                rels = dataset.relmap.inverse_transform(rels[:-4].reshape(1,-1))[0]
-                for r in rels:
-                    if r in ['subject', 'target']:
-                        if orglb == 'Action' and destlb == 'Concept':
-                            sentence_rels.append((r, orgid, destid))
-                    else:
-                        if orglb == 'Concept' and destlb == 'Concept':
-                            sentence_rels.append((r, orgid, destid))
-
-            val_relations.append(sentence_rels)
-
-        return val_labels, val_relations
-
-    def _hmm(self, ind:Individual, train:TassDataset, dev:TassDataset):
+    def _hmm(self, ind:Individual, train:Dataset, dev:Dataset):
         train_lengths = [len(s) for s in train.sentences]
         xtrain, ytrain = train.by_word()
 
@@ -681,7 +548,7 @@ class TassGrammar(Grammar):
         crf.fit(xtrain, ytrain)
         return [crf.predict(x) for x in xdev]
 
-    def _class(self, ind:Individual, train:TassDataset, dev:TassDataset):
+    def _class(self, ind:Individual, train:Dataset, dev:Dataset):
         #LR | nb | SVM | dt | NN
         des = ind.choose('lr', 'nb', 'svm', 'dt', 'nn')
         clss = None
@@ -723,7 +590,7 @@ class TassGrammar(Grammar):
         #linear | rbf | poly
         return i.choose('linear', 'rbf', 'poly')
 
-    def _nn(self, ind:Individual, train:TassDataset, dev:TassDataset):
+    def _nn(self, ind:Individual, train:Dataset, dev:Dataset):
         try:
             # CVLayers DLayers FLayer Drop | RLayers DLayers FLayer Drop | DLayers FLayer Drop
             model = Sequential()
@@ -890,9 +757,7 @@ def main():
 
         try:
             assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
-            sample['Pipeline'][2]['BC'][0]['Class'][0]['LR']
-            # sample['Pipeline'][3]['C'][0]['Class'][0]['NN']
+            sample['Pipeline'][1]['ABC'][0]['Class'][0]['NN']
         except:
             continue
 
