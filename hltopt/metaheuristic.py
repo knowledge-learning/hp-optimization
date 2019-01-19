@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Sat Apr  4 12:31:33 2015
 
-@author: suilan
-"""
 import json
 import os
+import time
 
 class Metaheuristic:
 
@@ -18,7 +15,7 @@ class Metaheuristic:
                 continue
             p[k]=v
 
-        with open(self.__class__.__name__ + ".json","a") as f:
+        with open(self.__class__.__name__ + "-" + str(int(time.time())) + ".json","a") as f:
             json.dump(p,f,cls=encoder)
             f.write("\n")
 

@@ -6,7 +6,7 @@ import random
 from queue import Empty
 
 import numpy as np
-
+import warnings
 import yaml
 
 from .metaheuristic import Metaheuristic
@@ -102,7 +102,7 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False):
+    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False, errors='raise'):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -116,6 +116,7 @@ class PGE(Metaheuristic):
         self.popsize = popsize
         self.indsize = self._grammar.complexity()
         self.learning = learning
+        self.errors = errors
 
         if isinstance(selected, float):
             selected = int(selected * popsize)
@@ -188,9 +189,16 @@ class PGE(Metaheuristic):
         except InvalidPipeline as e:
             self.log("!", str(e))
             q.put(0)
+        except Exception as e:
+            warnings.warn(str(e))
+            q.put(0)
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""
+
+        self.log(yaml.dump(ind.sample()))
+        ind.reset()
+
         q = multiprocessing.Queue()
         p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q))
         p.start()
@@ -200,10 +208,16 @@ class PGE(Metaheuristic):
         except Empty:
             self.log("! Timeout")
             f = 0
+        except Exception as e:
+            if self.errors == 'raise':
+                raise
+            elif self.errors == 'warn':
+                warnings.warn(str(e))
+                f = 0
+            elif self.errors == 'ignore':
+                f = 0
 
         self.log("Fitness: %.3f" % f)
-        ind.reset()
-        self.log(yaml.dump(ind.sample()))
         return f
 
     def run(self, evals:int):
