@@ -748,7 +748,7 @@ class TassGrammar(Grammar):
 
 def main():
     grammar = TassGrammar()
-    ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=120)
+    ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
     ge.run(100)
 
     # for i in range(0, 100000):

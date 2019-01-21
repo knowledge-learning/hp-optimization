@@ -363,16 +363,17 @@ class SklearnGrammar(Grammar):
 
 
 class SklearnClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, timeout=None):
+    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, timeout=None, verbose=False):
         self.popsize = popsize
         self.select = select
         self.learning = learning
         self.iters = iters
         self.timeout = timeout
+        self.verbose = verbose
 
     def fit(self, X, y):
         self.grammar_ = SklearnGrammar(X, y)
-        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout)
+        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose)
         self.best_ = ge.run(self.iters)
         self.best_sample_ = self.best_.sample()
 
