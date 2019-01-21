@@ -583,8 +583,9 @@ class Sentence:
             relations = list(relation_mapper.inverse_transform(relations.reshape(1,-1))[0])
 
         for relation in relations:
+            print("!!!!!!!!", relation, k1.label, k2.label)
             if relation in ['subject', 'target']:
-                if k1.label != 'Action' or k2.label != 'target':
+                if k1.label != 'Action' or k2.label != 'Concept':
                     continue
             else:
                 if k1.label != 'Concept' or k2.label != 'Concept':

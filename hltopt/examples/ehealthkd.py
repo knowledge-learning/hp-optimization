@@ -143,7 +143,7 @@ class TassGrammar(Grammar):
         }
 
     def evaluate(self, ind:Individual):
-        FAST = False #True
+        FAST = True
         TEST = False
 
         # load training data
