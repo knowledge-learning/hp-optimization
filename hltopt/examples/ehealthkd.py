@@ -812,35 +812,35 @@ class TassGrammar(Grammar):
 def main():
     grammar = TassGrammar()
 
-    # ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
-    # ge.run(100)
+    ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
+    ge.run(100)
 
-    for i in range(0, 100000):
-        random.seed(i)
+    # for i in range(0, 100000):
+    #     random.seed(i)
 
-        ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
-        sample = ind.sample()
+    #     ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
+    #     sample = ind.sample()
 
-        try:
-            assert sample['Pipeline'][0]['Repr'][3]['SemFeat'][1]['Dep'] == ['yes']
-            assert sample['Pipeline'][0]['Repr'][2]['MulWords'][0] == 'postag'
-            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
-            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
-            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
-        except:
-            continue
+    #     try:
+    #         assert sample['Pipeline'][0]['Repr'][3]['SemFeat'][1]['Dep'] == ['yes']
+    #         assert sample['Pipeline'][0]['Repr'][2]['MulWords'][0] == 'postag'
+    #         assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
+    #         sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
+    #         sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+    #         sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
+    #     except:
+    #         continue
 
-        print("\nRandom seed %i" % i)
-        print(yaml.dump(sample))
-        ind.reset()
+    #     print("\nRandom seed %i" % i)
+    #     print(yaml.dump(sample))
+    #     ind.reset()
 
-        try:
-            print(grammar.evaluate(ind))
-            break
-        except InvalidPipeline as e:
-            print("Error", str(e))
-            continue
+    #     try:
+    #         print(grammar.evaluate(ind))
+    #         break
+    #     except InvalidPipeline as e:
+    #         print("Error", str(e))
+    #         continue
 
 if __name__ == '__main__':
     main()
