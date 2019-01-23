@@ -203,7 +203,7 @@ class TassGrammar(Grammar):
         _, dev = dataset.split()
 
         for actual in dev.sentences:
-            print(actual.text)
+            # print(actual.text)
             predicted = actual.invert()
 
             for phrase in actual.keyphrases:
@@ -213,35 +213,35 @@ class TassGrammar(Grammar):
                     correctA += 1
 
                     if match.label == phrase.label:
-                        print("Correct keyphrase:", phrase, match)
+                        # print("Correct keyphrase:", phrase, match)
                         correctB += 1
                     else:
-                        print("Incorrect keyphrase:", phrase, match)
+                        # print("Incorrect keyphrase:", phrase, match)
                         incorrectB += 1
                 else:
-                    print("Missing keyphrase:", phrase)
+                    # print("Missing keyphrase:", phrase)
                     missingA += 1
 
             for phrase in predicted.keyphrases:
                 if not actual.find_keyphrase(id=phrase.id):
-                    print("Spurious keyphrase:", phrase)
+                    # print("Spurious keyphrase:", phrase)
                     spuriousA += 1
 
             for relation in actual.relations:
                 match = predicted.find_relation(relation.origin, relation.destination, relation.label)
 
                 if match:
-                    print("Correct relation:", relation, match)
+                    # print("Correct relation:", relation, match)
                     correctC += 1
                 else:
-                    print("Missing relation:", relation)
+                    # print("Missing relation:", relation)
                     missingC += 1
 
             for relation in predicted.relations:
                 match = actual.find_relation(relation.origin, relation.destination, relation.label)
 
                 if not match:
-                    print("Spurious relation:", relation)
+                    # print("Spurious relation:", relation)
                     spuriousC += 1
 
         print("[*] Task A: %0.2f" % sdiv(correctA, correctA + missingA + spuriousA))
