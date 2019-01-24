@@ -518,6 +518,11 @@ class TassGrammar(Grammar):
         prediction = (prediction > 0.5).reshape(-1).tolist()
         all_tokens = [token for sentence in dev.sentences for token in sentence.tokens]
 
+        if 'cheat-a' in sys.argv:
+            for token in all_tokens:
+                token.mark_keyword(token.label != '')
+            return
+
         for token, is_kw in szip(all_tokens, prediction):
             token.mark_keyword(is_kw)
 
@@ -529,6 +534,9 @@ class TassGrammar(Grammar):
         prediction = (prediction > 0.5).astype(int).reshape(-1).tolist()
         all_tokens = [token for sentence in dev.sentences for token in sentence.tokens if token.label != '']
 
+        if 'cheat-b' in sys.argv:
+            return
+
         for token, label in szip(all_tokens, prediction):
             token.mark_label(label)
 
@@ -539,6 +547,11 @@ class TassGrammar(Grammar):
         prediction = self._class(ind, train, dev)
         prediction = (prediction > 0.5).astype(int)
         all_token_pairs = list(dev.token_pairs())
+
+        if 'cheat-c' in sys.argv:
+            for s in dev.sentences:
+                s.predicted_relations = list(s.relations)
+            return
 
         for (k1, k2), relations in szip(all_token_pairs, prediction):
             k1.sentence.add_predicted_relations(k1, k2, relations)
