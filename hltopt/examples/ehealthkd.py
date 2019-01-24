@@ -21,6 +21,7 @@ from pathlib import Path
 
 from sklearn_crfsuite.estimator import CRF
 from seqlearn.hmm import MultinomialHMM
+from sklearn.metrics import confusion_matrix
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression
@@ -203,7 +204,7 @@ class TassGrammar(Grammar):
         _, dev = dataset.split()
 
         for actual in dev.sentences:
-            print("\n" + actual.text)
+            self.log("\n" + actual.text)
             predicted = actual.invert()
 
             for phrase in actual.keyphrases:
@@ -213,40 +214,56 @@ class TassGrammar(Grammar):
                     correctA += 1
 
                     if match.label == phrase.label:
-                        print("Correct keyphrase:", phrase, match)
+                        self.log("Correct keyphrase:", phrase, match)
                         correctB += 1
                     else:
-                        print("Incorrect keyphrase:", phrase, match)
+                        self.log("Incorrect keyphrase:", phrase, match)
                         incorrectB += 1
                 else:
-                    print("Missing keyphrase:", phrase)
+                    self.log("Missing keyphrase:", phrase)
                     missingA += 1
 
             for phrase in predicted.keyphrases:
                 if not actual.find_keyphrase(id=phrase.id):
-                    print("Spurious keyphrase:", phrase)
+                    self.log("Spurious keyphrase:", phrase)
                     spuriousA += 1
 
             for relation in actual.relations:
                 match = predicted.find_relation(relation.origin, relation.destination, relation.label)
 
                 if match:
-                    print("Correct relation:", relation, match)
+                    self.log("Correct relation:", relation, match)
                     correctC += 1
                 else:
-                    print("Missing relation:", relation)
+                    self.log("Missing relation:", relation)
                     missingC += 1
 
             for relation in predicted.relations:
                 match = actual.find_relation(relation.origin, relation.destination, relation.label)
 
                 if not match:
-                    print("Spurious relation:", relation)
+                    self.log("Spurious relation:", relation)
                     spuriousC += 1
 
-        print("[*] Task A: %0.2f" % sdiv(correctA, correctA + missingA + spuriousA))
-        print("[*] Task B: %0.2f" % sdiv(correctB, correctB + incorrectB))
-        print("[*] Task C: %0.2f" % sdiv(correctC, correctC + missingC + spuriousC))
+        precA = sdiv(correctA + 0.5 * partialA, correctA + partialA + spuriousA)
+        recA = sdiv(correctA + 0.5 * partialA, correctA + partialA + missingA)
+
+        precC = sdiv(correctC, correctC + spuriousC)
+        recC = sdiv(correctC, correctC + missingC)
+
+        self.log('correctA', correctA)
+        self.log('correctB', correctB)
+        self.log('correctC', correctC)
+        self.log('incorrectB', incorrectB)
+        self.log('missingA', missingA)
+        self.log('missingC', missingC)
+        self.log('partialA', partialA)
+        self.log('spuriousA', spuriousA)
+        self.log('spuriousC', spuriousC)
+
+        self.log("[*] Task A: %0.2f" % sdiv(2 * precA * recA, precA + recA))
+        self.log("[*] Task B: %0.2f" % sdiv(correctB, correctB + incorrectB))
+        self.log("[*] Task C: %0.2f" % sdiv(2 * precC * recC, precC + recC))
 
         top = (correctA + 0.5 * partialA + correctB + correctC)
         spr = (correctA + partialA + correctB + incorrectB + spuriousA + correctC + spuriousC)
@@ -255,6 +272,10 @@ class TassGrammar(Grammar):
         recall = sdiv(top, msn)
 
         return sdiv(2 * precision * recall, precision + recall)
+
+    def log(self, *args, **kwargs):
+        if '-v' in sys.argv:
+            print(*args, **kwargs)
 
     def _repr(self, i, dataset:Dataset):
         # 'Prep Token SemFeat PosPrep MulWords Embed',
@@ -313,6 +334,7 @@ class TassGrammar(Grammar):
                     ids += 1
 
                 keyword = Keyphrase(sentence, features, label, id, start, end)
+                keyword.spacy_token = [token]
                 sentence.tokens.append(keyword)
 
         dataset.max_length = max(len(s) for s in dataset.sentences)
@@ -448,6 +470,11 @@ class TassGrammar(Grammar):
                     ids += 1
 
                 phrase = Keyphrase(sentence, features, label, id, start, end)
+                phrase.spacy_token = []
+
+                for t in gram:
+                    phrase.spacy_token.extend(t.spacy_token)
+
                 sentence.tokens.append(phrase)
 
         dataset.max_length = max(len(s) for s in dataset.sentences)
@@ -473,32 +500,33 @@ class TassGrammar(Grammar):
         # train the dict-vectorizer in the relevant features
         feature_dicts = [dict(token.features) for sentence in dataset.sentences for token in sentence.tokens]
 
-        if choice == 'wv' or choice == 'none':
-            # remove text *and* vector
-            for d in feature_dicts:
-                d.pop('vector')
-                d.pop('norm')
-        elif choice == 'onehot':
-            # remove only vector
-            for d in feature_dicts:
-                d.pop('vector')
+        for d in feature_dicts:
+            d.pop('vector')
+            d.pop('norm')
 
         print("Vectorizing...", end="")
 
-        dvect = DictVectorizer().fit(feature_dicts)
-        hashr = FeatureHasher(n_features=1000)
+        dvect = DictVectorizer(sparse=False).fit(feature_dicts)
+        hashr = FeatureHasher(n_features=1000, input_type='string', non_negative=True)
 
         # now we vectorize
         for sentence in dataset.sentences:
             for token in sentence.tokens:
-                # save the vw vector for later
+                # onehot encoding for words (hashing trick)
+                text = token.features['norm']
+                onehot = hashr.transform([text]).toarray().flatten()
+                # word2vec encoding
                 vector = token.features['vector']
-                features = dvect.inverse_transform(dvect.transform([token.features]))
-                features = hashr.transform(features).toarray().flatten()
+                # semantic features
+                semantic = dvect.transform([token.features]).flatten()
 
                 # now maybe reuse that wv
                 if choice == 'wv':
-                    features = np.hstack((vector, features))
+                    features = np.hstack((vector, semantic))
+                elif choice == 'onehot':
+                    features = np.hstack((onehot, semantic))
+                else:
+                    features = semantic
 
                 token.features = features
 
@@ -522,6 +550,11 @@ class TassGrammar(Grammar):
             for token in all_tokens:
                 token.mark_keyword(token.label != '')
             return
+            # for s in dev.sentences:
+            #     s.tokens = list(s.keyphrases)
+            #     for token in s.tokens:
+            #         token.mark_keyword(token.label != '')
+            #         token.features = np.asarray([0])
 
         for token, is_kw in szip(all_tokens, prediction):
             token.mark_keyword(is_kw)
@@ -545,7 +578,7 @@ class TassGrammar(Grammar):
         train, dev = dataset.split()
 
         prediction = self._class(ind, train, dev)
-        prediction = (prediction > 0.5).astype(int)
+        prediction = prediction.astype(int)
         all_token_pairs = list(dev.token_pairs())
 
         if 'cheat-c' in sys.argv:
@@ -554,7 +587,10 @@ class TassGrammar(Grammar):
             return
 
         for (k1, k2), relations in szip(all_token_pairs, prediction):
+            # print(relations)
             k1.sentence.add_predicted_relations(k1, k2, relations)
+
+        # raise Exception()
 
     def _ab(self, ind, dataset):
         method = ind.choose(self._class, self._hmm)
@@ -660,16 +696,23 @@ class TassGrammar(Grammar):
 
         xtrain, ytrain = train.by_word(balanced=False)
 
-        if len(ytrain.shape) > 1:
-            clss = OneVsRestClassifier(clss)
+        # if len(ytrain.shape) > 1:
+            # clss = OneVsRestClassifier(clss)
 
         clss.fit(xtrain, ytrain)
 
-        xdev, _ = dev.by_word()
-        return clss.predict(xdev)
+        xdev, ydev = dev.by_word()
+        prediction = clss.predict(xdev)
+
+        print("Validation score:", clss.score(xdev, ydev))
+        print("Confusion matrix:")
+        print(confusion_matrix(ydev, prediction))
+
+        return prediction
 
     def _lr(self, i):
-        return LogisticRegression(C=self._reg(i), penalty=self._penalty(i))
+        lr = LogisticRegression(C=self._reg(i), penalty=self._penalty(i))
+        return lr
 
     def _reg(self, i):
         return i.nextfloat()
@@ -843,35 +886,35 @@ class TassGrammar(Grammar):
 def main():
     grammar = TassGrammar()
 
-    # ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
-    # ge.run(100)
+    ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
+    ge.run(100)
 
-    for i in range(0, 100000):
-        random.seed(i)
+    # for i in range(0, 100000):
+    #     random.seed(i)
 
-        ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
-        sample = ind.sample()
+    #     ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
+    #     sample = ind.sample()
 
-        try:
-            assert sample['Pipeline'][0]['Repr'][3]['SemFeat'][1]['Dep'] == ['yes']
-            assert sample['Pipeline'][0]['Repr'][2]['MulWords'][0] == 'postag'
-            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
-            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
-            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
-        except:
-            continue
+    #     try:
+    #         assert sample['Pipeline'][0]['Repr'][3]['SemFeat'][1]['Dep'] == ['yes']
+    #         assert sample['Pipeline'][0]['Repr'][2]['MulWords'][0] == 'postag'
+    #         assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
+    #         sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
+    #         sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+    #         sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
+    #     except:
+    #         continue
 
-        print("\nRandom seed %i" % i)
-        print(yaml.dump(sample))
-        ind.reset()
+    #     print("\nRandom seed %i" % i)
+    #     print(yaml.dump(sample))
+    #     ind.reset()
 
-        try:
-            print(grammar.evaluate(ind))
-            break
-        except InvalidPipeline as e:
-            print("Error", str(e))
-            continue
+    #     try:
+    #         print(grammar.evaluate(ind))
+    #         break
+    #     except InvalidPipeline as e:
+    #         print("Error", str(e))
+    #         continue
 
 if __name__ == '__main__':
     main()

@@ -1,14 +1,42 @@
 # coding: utf-8
 
+import pprint
 import numpy as np
+from scipy import sparse as sp
 import bisect
 import functools
 from pathlib import Path
 from ...utils import szip
 from sklearn.feature_extraction import DictVectorizer
 from typing import List
+from tensorflow.keras.utils import to_categorical
 
-relation_mapper = DictVectorizer().fit({r:True} for r in "is-a same-as part-of property-of subject target".split())
+
+all_relations = "is-a same-as part-of property-of subject target subject/target none".split()
+
+
+def hstack(vectors):
+    return np.hstack(vectors)
+
+
+def vstack(vectors):
+    return np.vstack(vectors)
+
+
+def transform_relations(relations:set) -> int:
+    if len(relations) > 2:
+        raise ValueError("Invalid relations: {}".format(relations))
+
+    if len(relations) == 0:
+        return all_relations.index('none')
+
+    if len(relations) == 1:
+        return all_relations.index(list(relations)[0])
+
+    if relations != {'subject', 'target'}:
+        raise ValueError("Invalid relations: {}".format(relations))
+
+    return all_relations.index('subject/target')
 
 
 class Dataset:
@@ -154,7 +182,7 @@ class TaskADataset(Dataset):
                 X.append(token.features)
                 y.append(token.keyword_label)
 
-        return np.vstack(X), np.hstack(y)
+        return vstack(X), hstack(y)
 
     def by_sentence(self, balanced=False):
         X = []
@@ -165,7 +193,7 @@ class TaskADataset(Dataset):
                 X.append(sentence.token_features(self.max_length, i))
                 y.append(token.keyword_label)
 
-        return np.asarray(X), np.hstack(y)
+        return np.asarray(X), hstack(y)
 
 
 class TaskBDataset(Dataset):
@@ -191,7 +219,7 @@ class TaskBDataset(Dataset):
                     X.append(token.features)
                     y.append(token.binary_label)
 
-        return np.vstack(X), np.hstack(y)
+        return vstack(X), hstack(y)
 
     def by_sentence(self, balanced=False):
         X = []
@@ -203,7 +231,7 @@ class TaskBDataset(Dataset):
                     X.append(sentence.token_features(self.max_length, i))
                     y.append(token.binary_label)
 
-        return np.asarray(X), np.hstack(y)
+        return np.asarray(X), hstack(y)
 
 
 class TaskCDataset(Dataset):
@@ -217,7 +245,22 @@ class TaskCDataset(Dataset):
 
     @property
     def predict_size(self):
-        return 6
+        return 8
+
+    def token_pairs(self, enums=False):
+        for sentence in self.sentences:
+            for i, k1 in enumerate(sentence.tokens):
+                if k1.label == '':
+                    continue
+
+                for j, k2 in enumerate(sentence.tokens):
+                    if k2.label == '':
+                        continue
+
+                    if enums:
+                        yield i, j, k1, k2
+                    else:
+                        yield k1, k2
 
     def by_word(self, balanced=False):
         X = []
@@ -225,18 +268,16 @@ class TaskCDataset(Dataset):
 
         for k1, k2 in self.token_pairs():
             relations = k1.sentence.find_relations(k1.id, k2.id)
-            relation_labels = {r.label:True for r in relations}
-            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+            relation_labels = {r.label for r in relations}
+            relation_vector = transform_relations(relation_labels)
 
-            if balanced and relation_vector.sum() == 0:
-                continue
-
-            feature_vector = np.hstack((k1.features, k2.features))
+            joint_features = k1.sentence.joint_features(k1, k2)
+            feature_vector = np.hstack((k1.features, k2.features, joint_features))
 
             X.append(feature_vector)
             y.append(relation_vector)
 
-        return np.vstack(X), np.vstack(y)
+        return vstack(X), hstack(y)
 
     def by_sentence(self, balanced=False):
         X = []
@@ -244,8 +285,8 @@ class TaskCDataset(Dataset):
 
         for i, j, k1, k2 in self.token_pairs(enums=True):
             relations = k1.sentence.find_relations(k1.id, k2.id)
-            relation_labels = {r.label:True for r in relations}
-            relation_vector = relation_mapper.transform([relation_labels]).toarray().reshape(-1)
+            relation_labels = {r.label for r in relations}
+            relation_vector = transform_relations(relation_labels)
 
             if balanced and relation_vector.sum() == 0:
                 continue
@@ -255,7 +296,7 @@ class TaskCDataset(Dataset):
             X.append(feature_vector)
             y.append(relation_vector)
 
-        return np.asarray(X), np.vstack(y)
+        return np.asarray(X), hstack(y)
 
 
 class TaskABDataset(Dataset):
@@ -280,7 +321,7 @@ class TaskABDataset(Dataset):
                 X.append(token.features)
                 y.append(token.ternary_label)
 
-        return np.vstack(X), np.hstack(y)
+        return vstack(X), hstack(y)
 
     def by_sentence(self, balanced=False):
         X = []
@@ -291,7 +332,7 @@ class TaskABDataset(Dataset):
                 X.append(sentence.token_features(self.max_length, i))
                 y.append(token.ternary_label)
 
-        return np.asarray(X), np.hstack(y)
+        return np.asarray(X), hstack(y)
 
 
 class TaskBCDataset(Dataset):
@@ -327,7 +368,7 @@ class TaskBCDataset(Dataset):
             X.append(feature_vector)
             y.append(relation_vector)
 
-        return np.vstack(X), np.vstack(y)
+        return vstack(X), vstack(y)
 
     def by_sentence(self, balanced=False):
         X = []
@@ -349,7 +390,7 @@ class TaskBCDataset(Dataset):
             X.append(feature_vector)
             y.append(relation_vector)
 
-        return np.asarray(X), np.vstack(y)
+        return np.asarray(X), vstack(y)
 
 
 class TaskABCDataset(Dataset):
@@ -385,7 +426,7 @@ class TaskABCDataset(Dataset):
             X.append(feature_vector)
             y.append(relation_vector)
 
-        return np.vstack(X), np.vstack(y)
+        return vstack(X), vstack(y)
 
     def by_sentence(self, balanced=False):
         X = []
@@ -407,7 +448,7 @@ class TaskABCDataset(Dataset):
             X.append(feature_vector)
             y.append(relation_vector)
 
-        return np.asarray(X), np.vstack(y)
+        return np.asarray(X), vstack(y)
 
 
 class Keyphrase:
@@ -418,6 +459,7 @@ class Keyphrase:
         self.id = id
         self.start = start
         self.end = end
+        self.spacy_token = None
 
         self._all_keywords = []
         self._all_labels = []
@@ -559,6 +601,27 @@ class Sentence:
 
         return None
 
+    def joint_features(self, k1, k2):
+        # relations = {r.label for r in self.find_relations(k1.id, k2.id)}
+
+        i1 = np.mean([t.i for t in k1.spacy_token])
+        i2 = np.mean([t.i for t in k2.spacy_token])
+        distance = i1 - i2
+
+        xa,ya = k1.start, k1.end
+        xb,yb = k2.start, k2.end
+
+        contained = int(xa >= xb and ya <= yb)
+
+        # k1.spacy_token
+
+        # parent = k1.spacy_token[0]
+
+        # while not parent.is_ancestor(k2.spacy_token[0]):
+        #     parent = parent.head
+
+        return np.asarray([distance, contained])
+
     def _find_keyphrase_by_id(self, id):
         for k in self.keyphrases:
             if k.id == id:
@@ -594,10 +657,14 @@ class Sentence:
 
     def add_predicted_relations(self, k1, k2, relations):
         if not isinstance(relations, list):
-            relations = list(relation_mapper.inverse_transform(relations.reshape(1,-1))[0])
+            relations = all_relations[relations].split('/')
+
+        if relations[0] == 'none':
+            relations = []
+
+        # print("!!!!!!!!", relations, k1.label, k1.id, k2.label, k2.id)
 
         for relation in relations:
-            # print("!!!!!!!!", relation, k1.label, k1.id, k2.label, k2.id)
             if relation in ['subject', 'target']:
                 if k1.label != 'Action' or k2.label != 'Concept':
                     continue
