@@ -120,7 +120,7 @@ class TassGrammar(Grammar):
             'Dep'      : 'yes | no',
             'UMLS'     : 'yes | no',
             'SNOMED'   : 'yes | no',
-            'MulWords' : 'collocation Ngram | postag Ngram | none',
+            'MulWords' : 'collocations | postag Ngram | none',
             'Ngram'    : 'i(2,4)',
             'Embed'    : 'wordVec | onehot | none',
         }
@@ -203,7 +203,7 @@ class TassGrammar(Grammar):
         _, dev = dataset.split()
 
         for actual in dev.sentences:
-            # print(actual.text)
+            print("\n" + actual.text)
             predicted = actual.invert()
 
             for phrase in actual.keyphrases:
@@ -213,35 +213,35 @@ class TassGrammar(Grammar):
                     correctA += 1
 
                     if match.label == phrase.label:
-                        # print("Correct keyphrase:", phrase, match)
+                        print("Correct keyphrase:", phrase, match)
                         correctB += 1
                     else:
-                        # print("Incorrect keyphrase:", phrase, match)
+                        print("Incorrect keyphrase:", phrase, match)
                         incorrectB += 1
                 else:
-                    # print("Missing keyphrase:", phrase)
+                    print("Missing keyphrase:", phrase)
                     missingA += 1
 
             for phrase in predicted.keyphrases:
                 if not actual.find_keyphrase(id=phrase.id):
-                    # print("Spurious keyphrase:", phrase)
+                    print("Spurious keyphrase:", phrase)
                     spuriousA += 1
 
             for relation in actual.relations:
                 match = predicted.find_relation(relation.origin, relation.destination, relation.label)
 
                 if match:
-                    # print("Correct relation:", relation, match)
+                    print("Correct relation:", relation, match)
                     correctC += 1
                 else:
-                    # print("Missing relation:", relation)
+                    print("Missing relation:", relation)
                     missingC += 1
 
             for relation in predicted.relations:
                 match = actual.find_relation(relation.origin, relation.destination, relation.label)
 
                 if not match:
-                    # print("Spurious relation:", relation)
+                    print("Spurious relation:", relation)
                     spuriousC += 1
 
         print("[*] Task A: %0.2f" % sdiv(correctA, correctA + missingA + spuriousA))
@@ -372,19 +372,54 @@ class TassGrammar(Grammar):
 
     def _mulwords(self, i, dataset):
         #'MulWords' : 'countPhrase | freeling | all',
-        choice = i.choose(self._collocation, self._postag, self._mulwnone)
+        choice = i.choose(self._collocations, self._postag, self._mulwnone)
 
         return choice(i, dataset)
 
-    def _collocation(self, i, dataset:Dataset):
+    def _collocations(self, i, dataset:Dataset):
         warnings.warn("Collocation multiwords not implemented yet")
-        ngram = i.nextint()
 
-        return dataset
+        tokens = [t.text for sentence in dataset.sentences for t in sentence.tokens]
+
+        bigram_measures = nltk.collocations.BigramAssocMeasures()
+        big_finder = nltk.collocations.BigramCollocationFinder.from_words(tokens)
+        big_finder.apply_freq_filter(3)
+
+        trigram_measures = nltk.collocations.TrigramAssocMeasures()
+        trig_finder = nltk.collocations.TrigramCollocationFinder.from_words(tokens)
+        trig_finder.apply_freq_filter(3)
+
+        bigrams = big_finder.nbest(bigram_measures.pmi, int(0.1 * len(tokens)))
+        trigrams = trig_finder.nbest(trigram_measures.pmi, int(0.1 * len(tokens)))
+
+        bigrams = set("_".join(b) for b in bigrams)
+        trigrams = set("_".join(b) for b in trigrams)
+
+        def filter(gram, features):
+            return features['norm'] in bigrams or features['norm'] in trigrams
+
+        return self._process_ngrams(dataset, 3, filter)
 
     def _postag(self, i, dataset:Dataset):
-        ids = max(k.id for sentence in dataset.sentences for k in sentence.tokens) * 10
         ngram = i.nextint()
+
+        def filter(gram, features):
+            for t in gram:
+                if t.features['pos'] not in ['NOUN', 'ADJ', 'ADP']:
+                    return False
+
+            if gram[0].features['pos'] != 'NOUN':
+                return False
+
+            if gram[-1].features['pos'] not in ['NOUN', 'ADJ']:
+                return False
+
+            return True
+
+        return self._process_ngrams(dataset, ngram, filter)
+
+    def _process_ngrams(self, dataset, ngram, filter):
+        ids = max(k.id for sentence in dataset.sentences for k in sentence.tokens) * 10
 
         for sentence in dataset.sentences:
             ngrams = self._generate_ngrams(ngram, sentence.tokens)
@@ -397,20 +432,7 @@ class TassGrammar(Grammar):
                     vector=sum(t.features['vector'] for t in gram)
                 )
 
-                process = True
-
-                for t in gram:
-                    if t.features['pos'] not in ['NOUN', 'ADJ', 'ADP']:
-                        process = False
-                        break
-
-                if gram[0].features['pos'] != 'NOUN':
-                    process = False
-
-                if gram[-1].features['pos'] not in ['NOUN', 'ADJ']:
-                    process = False
-
-                if not process:
+                if not filter(gram, features):
                     continue
 
                 start = gram[0].start
@@ -470,13 +492,9 @@ class TassGrammar(Grammar):
         for sentence in dataset.sentences:
             for token in sentence.tokens:
                 # save the vw vector for later
-
                 vector = token.features['vector']
                 features = dvect.inverse_transform(dvect.transform([token.features]))
-                # print(features)
                 features = hashr.transform(features).toarray().flatten()
-                # print(features)
-                # features = vectorizer.transform([token.features]).toarray().flatten()
 
                 # now maybe reuse that wv
                 if choice == 'wv':
@@ -812,35 +830,35 @@ class TassGrammar(Grammar):
 def main():
     grammar = TassGrammar()
 
-    ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
-    ge.run(100)
+    # ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
+    # ge.run(100)
 
-    # for i in range(0, 100000):
-    #     random.seed(i)
+    for i in range(0, 100000):
+        random.seed(i)
 
-    #     ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
-    #     sample = ind.sample()
+        ind = Individual([random.uniform(0,1) for _ in range(100)], grammar)
+        sample = ind.sample()
 
-    #     try:
-    #         assert sample['Pipeline'][0]['Repr'][3]['SemFeat'][1]['Dep'] == ['yes']
-    #         assert sample['Pipeline'][0]['Repr'][2]['MulWords'][0] == 'postag'
-    #         assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
-    #         sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
-    #         sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
-    #         sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
-    #     except:
-    #         continue
+        try:
+            assert sample['Pipeline'][0]['Repr'][3]['SemFeat'][1]['Dep'] == ['yes']
+            assert sample['Pipeline'][0]['Repr'][2]['MulWords'][0] == 'postag'
+            assert sample['Pipeline'][0]['Repr'][5]['Embed'][0] == 'onehot'
+            sample['Pipeline'][1]['A'][0]['Class'][0]['LR']
+            sample['Pipeline'][2]['B'][0]['Class'][0]['LR']
+            sample['Pipeline'][3]['C'][0]['Class'][0]['LR']
+        except:
+            continue
 
-    #     print("\nRandom seed %i" % i)
-    #     print(yaml.dump(sample))
-    #     ind.reset()
+        print("\nRandom seed %i" % i)
+        print(yaml.dump(sample))
+        ind.reset()
 
-    #     try:
-    #         print(grammar.evaluate(ind))
-    #         break
-    #     except InvalidPipeline as e:
-    #         print("Error", str(e))
-    #         continue
+        try:
+            print(grammar.evaluate(ind))
+            break
+        except InvalidPipeline as e:
+            print("Error", str(e))
+            continue
 
 if __name__ == '__main__':
     main()
