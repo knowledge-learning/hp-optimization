@@ -18,12 +18,12 @@ def load_corpus():
     yvalid = []
 
     for row, line in enumerate(train_data):
-        for elem in row.split():
+        for elem in line.split():
             col, value = elem.split(":")
             Xtrain[row, int(col)] = int(value)
 
     for row, line in enumerate(valid_data):
-        for elem in row.split():
+        for elem in line.split():
             col, value = elem.split(":")
             Xvalid[row, int(col)] = int(value)
 
@@ -33,4 +33,4 @@ def load_corpus():
     for line in valid_labels:
         yvalid.append(int(line))
 
-    return sp.vstack((Xtrain, Xvalid)), np.asarray(ytrain + yvalid)
+    return sp.vstack((Xtrain, Xvalid)).tocsr(), np.asarray(ytrain + yvalid)
