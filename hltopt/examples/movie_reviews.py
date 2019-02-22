@@ -134,7 +134,7 @@ def simple(easy=False):
 
 
 def full(easy=False):
-    clf = SklearnNLPClassifier(verbose=True, timeout=10)
+    clf = SklearnNLPClassifier(verbose=True, timeout=300)
     X, y = load_corpus(easy)
 
     clf.fit(X, y)
