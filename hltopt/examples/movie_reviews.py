@@ -108,7 +108,7 @@ def load_corpus(easy=False):
         sentences.append(fp.read())
         classes.append(cls)
 
-        if easy and len(classes) > 10:
+        if easy and len(classes) >= 100:
             break
 
     print("Sentences:", len(sentences))
@@ -134,7 +134,7 @@ def simple(easy=False):
 
 
 def full(easy=False):
-    clf = SklearnNLPClassifier(verbose=True, timeout=300)
+    clf = SklearnNLPClassifier(verbose=True, timeout=60)
     X, y = load_corpus(easy)
 
     clf.fit(X, y)

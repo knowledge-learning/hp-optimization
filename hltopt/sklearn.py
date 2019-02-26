@@ -233,7 +233,7 @@ class SklearnGrammar(Grammar):
         return method(ind, X)
 
     def _ncomp(self, ind, X):
-        return max(2, int(ind.nextfloat() * X.shape[1]))
+        return max(2, int(ind.nextfloat() * min(X.shape)))
 
     def _fastica(self, ind, X):
         # 'FastICA'      : 'i(2,100)',
@@ -395,6 +395,8 @@ class SklearnNLPGrammar(SklearnGrammar):
             'Pipeline'  : 'TextPrep DataPrep FeatPrep Class',
             'TextPrep'  : 'Clean Semantic Vect',
 
+            'Encoding'  : 'none',
+
             'Clean'     : 'Stopwords',
             'Stopwords' :'yes | no',
 
@@ -437,6 +439,9 @@ class SklearnNLPGrammar(SklearnGrammar):
             raise e
 
         return classifier.score(Xtest, ytest)
+
+    def _encoding(self, ind, X):
+        return X
 
     def _text_prep(self, ind, X):
         # 'TextPrep'  : 'Clean Vect Semantic',

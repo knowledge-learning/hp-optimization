@@ -16,3 +16,10 @@ def sdiv(a, b):
         return a / b
     except ZeroDivisionError:
         return 0.0
+
+
+def draw(grammar, individual=None):
+    import pydot
+
+    graph = pydot.Dot()
+    model = grammar.get_model()
