@@ -6,26 +6,26 @@ services:
     ports:
       - "8888:8888"
     volumes:
-      - ".:/home/hlt"
+      - ".:/home/hpopt"
       - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
-    working_dir: "/home/hlt"
+    working_dir: "/home/hpopt"
     command: "jupyter notebook --allow-root --NotebookApp.ip=0.0.0.0 --NotebookApp.token= --no-browser"
 
   test:
     image: "matcomuh/ml:cpu"
     volumes:
-      - ".:/home/hlt"
+      - ".:/home/hpopt"
       - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
-    working_dir: "/home/hlt"
+    working_dir: "/home/hpopt"
     command: "pytest"
 
   terminal:
     image: "matcomuh/ml:cpu"
     volumes:
-      - ".:/home/hlt"
+      - ".:/home/hpopt"
       - "~/gensim-data:/root/gensim-data"
       - "~/nltk_data:/root/nltk_data"
-    working_dir: "/home/hlt"
+    working_dir: "/home/hpopt"
     command: "bash"
