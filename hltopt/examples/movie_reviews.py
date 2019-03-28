@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import sys
 import pprint
 import random
 import yaml
@@ -12,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.svm import SVC
 from ..ge import Grammar, PGE, Individual
+from ..sklearn import SklearnNLPClassifier
 
 
 class MyGrammar(Grammar):
@@ -89,7 +91,7 @@ class MyGrammar(Grammar):
         return LogisticRegression(penalty=i.choose('l1', 'l2'), C=i.nextfloat())
 
 
-def load_corpus():
+def load_corpus(easy=False):
     sentences = []
     classes = []
 
@@ -106,6 +108,9 @@ def load_corpus():
         sentences.append(fp.read())
         classes.append(cls)
 
+        if easy and len(classes) >= 100:
+            break
+
     print("Sentences:", len(sentences))
 
     return sentences, classes
@@ -116,9 +121,9 @@ class NoReductor:
         return X
 
 
-def main():
+def simple(easy=False):
     print("Loading corpus")
-    grammar = MyGrammar(*load_corpus())
+    grammar = MyGrammar(*load_corpus(easy))
 
     print("Running heuristic")
     ge = PGE(grammar, popsize=100, selected=20, learning=0.05, verbose=True, timeout=10)
@@ -128,5 +133,15 @@ def main():
     print(ge.pop_std)
 
 
+def full(easy=False):
+    clf = SklearnNLPClassifier(verbose=True, timeout=60)
+    X, y = load_corpus(easy)
+
+    clf.fit(X, y)
+
+
 if __name__ == '__main__':
-    main()
+    if '--simple' in sys.argv:
+        simple('--easy' in sys.argv)
+    else:
+        full('--easy' in sys.argv)

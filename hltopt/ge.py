@@ -191,8 +191,11 @@ class PGE(Metaheuristic):
             self.log("!", str(e))
             q.put(0)
         except Exception as e:
-            warnings.warn(str(e))
             q.put(0)
+            if self.errors == 'raise':
+                raise
+            elif self.errors == 'warn':
+                warnings.warn(str(e))
 
     def _evaluate(self, ind:Individual):
         """Computa el fitness de un individuo."""

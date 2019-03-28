@@ -1,8 +1,17 @@
 # coding: utf-8
 
-__all__ = ['SklearnGrammar']
+import numpy as np
+from scipy import sparse as sp
+from collections import Counter
+
+import spacy
+import tqdm
 
 from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer
+from nltk.corpus import stopwords
 
 # classifiers
 ## bayes
@@ -179,7 +188,13 @@ class SklearnGrammar(Grammar):
     def _encoding(self, ind, X):
         # 'Encoding'     : 'none | onehot',
         if ind.choose('none', 'onehot') == 'onehot':
-            X = OneHotEncoder(categories='auto').fit_transform(X)
+            try:
+                X = OneHotEncoder(categories='auto').fit_transform(X)
+            except TypeError as e:
+                if 'dense data is required' in str(e):
+                    raise InvalidPipeline(str(e))
+                else:
+                    raise
 
         return X
 
@@ -218,7 +233,7 @@ class SklearnGrammar(Grammar):
         return method(ind, X)
 
     def _ncomp(self, ind, X):
-        return max(2, int(ind.nextfloat() * X.shape[1]))
+        return max(2, int(ind.nextfloat() * min(X.shape)))
 
     def _fastica(self, ind, X):
         # 'FastICA'      : 'i(2,100)',
@@ -362,6 +377,134 @@ class SklearnGrammar(Grammar):
         return MLPClassifier(hidden_layer_sizes=[neurons] * layers, activation=activation)
 
 
+class SklearnNLPGrammar(SklearnGrammar):
+    def __init__(self, X, y, *args, **kwargs):
+        super().__init__(X=X, y=y, *args, **kwargs)
+
+        print("Loading spacy...", end="", flush=True)
+        self.nlp = spacy.load('en')
+        print("done")
+
+        print("Preprocessing sentences...", flush=True)
+        self.sentences = [self.nlp(s) for s in tqdm.tqdm(X)]
+
+    def grammar(self):
+        g = {}
+        g.update(grammar)
+        g.update({
+            'Pipeline'  : 'TextPrep DataPrep FeatPrep Class',
+            'TextPrep'  : 'Clean Semantic Vect',
+
+            'Encoding'  : 'none',
+
+            'Clean'     : 'Stopwords',
+            'Stopwords' :'yes | no',
+
+            'Semantic'  : 'Pos Tag Dep',
+            'Pos'       : 'yes | no',
+            'Tag'       : 'yes | no',
+            'Dep'       : 'yes | no',
+
+            'Vect'      : 'CV | TF | TFIDF',
+            'CV'        : 'i(1,3)',
+            'TF'        : 'i(1,3)',
+            'TFIDF'     : 'i(1,3)',
+        })
+
+        return g
+
+    def evaluate(self, ind):
+        # 'Pipeline'     : 'TextPrep DataPrep FeatPrep Class',
+        X, y = self.X, self.y
+        X = self._text_prep(ind, X)
+        X, balance = self._data_prep(ind, X)
+        X = self._feat_prep(ind, X)
+
+        Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.2)
+
+        classifier = self._classifier(ind, balance)
+
+        try:
+            classifier.fit(Xtrain, ytrain)
+        except TypeError as e:
+            if 'sparse' in str(e) and hasattr(Xtrain, 'toarray'):
+                Xtrain = Xtrain.toarray()
+                Xtest = Xtest.toarray()
+                classifier.fit(Xtrain, ytrain)
+            else:
+                raise e
+        except ValueError as e:
+            if 'must be non-negative' in str(e):
+                raise InvalidPipeline()
+            raise e
+
+        return classifier.score(Xtest, ytest)
+
+    def _encoding(self, ind, X):
+        return X
+
+    def _text_prep(self, ind, X):
+        # 'TextPrep'  : 'Clean Vect Semantic',
+        sw = self._clean(ind)
+        F = self._semantic(ind, X)
+        X = self._vect(ind, X, sw)
+
+        if F is None:
+            return X
+
+        if isinstance(X, np.ndarray):
+            return np.hstack((X, F))
+        else:
+            return sp.hstack((X, F))
+
+    def _clean(self, ind):
+        # preprocesamiento
+        if ind.nextbool():
+            return stopwords.words('english')
+
+        return set()
+
+    def _semantic(self, ind, X):
+        use_pos = ind.nextbool()
+        use_tag = ind.nextbool()
+        use_dep = ind.nextbool()
+
+        if not any((use_pos, use_tag, use_dep)):
+            return None
+
+        features = []
+
+        for sentence in self.sentences:
+            counter = Counter()
+            for token in sentence:
+                if use_pos:
+                    counter[token.pos_] += 1
+                if use_tag:
+                    counter[token.tag_] += 1
+                if use_dep:
+                    counter[token.dep_] += 1
+            features.append(counter)
+
+        self.dv = DictVectorizer()
+        return self.dv.fit_transform(features)
+
+    def _vect(self, ind, X, sw):
+        vect = ind.choose(self._cv, self._tf, self._tfidf)
+        ngram = ind.nextint()
+        v = vect(ngram, sw)
+
+        return v.fit_transform(X)
+
+    def _cv(self, ngram, sw):
+        return CountVectorizer(stop_words=sw, ngram_range=(1, ngram))
+
+    def _tf(self, ngram, sw):
+        return TfidfVectorizer(stop_words=sw, ngram_range=(1, ngram), use_idf=False)
+
+    def _tfidf(self, ngram, sw):
+        return TfidfVectorizer(stop_words=sw, ngram_range=(1, ngram), use_idf=True)
+
+
 class SklearnClassifier(BaseEstimator, ClassifierMixin):
     def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, timeout=None, verbose=False):
         self.popsize = popsize
@@ -373,6 +516,30 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y):
         self.grammar_ = SklearnGrammar(X, y)
+        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose)
+        self.best_ = ge.run(self.iters)
+        self.best_sample_ = self.best_.sample()
+
+        self.best_.reset()
+        self.classifier_ = self.grammar_.train(self.best_, X, y)
+
+    def predict(self, X):
+        self.best_.reset()
+        X = self.grammar_.process(self.best_, X)
+        return self.classifier_.predict(X)
+
+
+class SklearnNLPClassifier(BaseEstimator, ClassifierMixin):
+    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, timeout=None, verbose=False):
+        self.popsize = popsize
+        self.select = select
+        self.learning = learning
+        self.iters = iters
+        self.timeout = timeout
+        self.verbose = verbose
+
+    def fit(self, X, y):
+        self.grammar_ = SklearnNLPGrammar(X, y)
         ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose)
         self.best_ = ge.run(self.iters)
         self.best_sample_ = self.best_.sample()

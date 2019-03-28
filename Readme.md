@@ -1,15 +1,9 @@
-# Human Language Technologies Optimization Framework
+# Hierarchical Pipeline Optimization
 
-To try the examples run
-
-```bash
-python -m hltopt.examples.simple_function
-```
-
-Or
+To try the examples run:
 
 ```bash
-python -m hltopt.examples.sklearn_opinion
+python -m hltopt.examples.movie_reviews
 ```
 
 ## Requirements
@@ -45,7 +39,7 @@ Licensed under the [MIT](https://opensource.org/licenses/MIT) open source licens
 
 > MIT License
 >
-> Copyright (c) 2018 Suilan Estévez Velarde <suilanestevez@gmail.com>
+> Copyright (c) 2019 Knowledge Learning Project
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy
 > of this software and associated documentation files (the "Software"), to deal
