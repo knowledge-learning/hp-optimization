@@ -1,8 +1,9 @@
 # coding: utf-8
 
+import sys
 import random
-from hltopt.datasets.uci.car import load_corpus
-from ..sklearn import SklearnClassifier
+from hpopt.datasets.uci.car import load_corpus
+from ..sklearn import SklearnClassifier, SklearnGrammar
 
 
 def main():
@@ -11,7 +12,7 @@ def main():
     print(" done")
 
     random.seed(0)
-    classifier = SklearnClassifier(popsize=100, select=20, iters=100, timeout=10, verbose=True)
+    classifier = SklearnClassifier(popsize=100, select=20, iters=100, timeout=60, fitness_evaluations=10, verbose=True)
     classifier.fit(X, y)
 
 

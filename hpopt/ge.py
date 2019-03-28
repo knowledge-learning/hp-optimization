@@ -103,7 +103,7 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False, errors='raise'):
+    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False, fitness_evaluations=1, errors='raise'):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -118,6 +118,7 @@ class PGE(Metaheuristic):
         self.indsize = self._grammar.complexity()
         self.learning = learning
         self.errors = errors
+        self.fitness_evaluations = fitness_evaluations
 
         if isinstance(selected, float):
             selected = int(selected * popsize)
@@ -185,8 +186,13 @@ class PGE(Metaheuristic):
 
     def _evaluate_one(self, ind, q):
         try:
-            f = self._grammar.evaluate(ind)
-            q.put(f)
+            score = 0
+
+            for _ in range(self.fitness_evaluations):
+                ind.reset()
+                score += self._grammar.evaluate(ind)
+
+            q.put(score / self.fitness_evaluations)
         except InvalidPipeline as e:
             self.log("!", str(e))
             q.put(0)
@@ -260,7 +266,7 @@ class GEEncoder(json.encoder.JSONEncoder):
             obj.reset()
             enc = obj.sample()
             obj.reset()
-            return enc
+            return { 'values': obj.values, 'repr': enc }
 
 
 class Production:
