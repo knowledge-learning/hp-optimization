@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import random
 from queue import Empty
+from functools import reduce
 
 import numpy as np
 import warnings
@@ -273,6 +274,9 @@ class Production:
 
         self.normalize()
 
+    def size(self, grammar):
+        return reduce(lambda x,y: x+y, [r.size(grammar) for r in self.rules])
+
     def update(self, body):
         for r in self.rules:
             if r.body == body:
@@ -322,6 +326,9 @@ class Rule:
     def __repr__(self):
         return "Rule(%s,%s)" % (repr(self.body), self.prob)
 
+    def size(self, grammar):
+        return reduce(lambda x,y: x*y, [grammar.size(s) for s in self.body if s[0].isupper()], 1)
+
     def merge(self, other, learning):
         self.prob = learning * other.prob + (1-learning) * self.prob
 
@@ -353,6 +360,9 @@ class IntProduction(Production):
 
     def __repr__(self):
         return "IntProduction(%s,%i,%i,%f,%f)"  % (self.symbol, self.min, self.max, self.mean, self.dev)
+
+    def size(self, grammar):
+        return 1
 
     def update(self, value):
         self.values.append(value)
@@ -444,3 +454,6 @@ class Grammar:
     def complexity(self, symbol='Pipeline'):
         """Calcula la máxima complejidad de una solución en la gramática."""
         return self._model[symbol].complexity(self)
+
+    def size(self, symbol='Pipeline'):
+        return self._model[symbol].size(self)
