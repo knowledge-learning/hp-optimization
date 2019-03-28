@@ -3,7 +3,7 @@
 To try the examples run:
 
 ```bash
-python -m hltopt.examples.movie_reviews
+python -m hpopt.examples.movie_reviews
 ```
 
 ## Requirements
