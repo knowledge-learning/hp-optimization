@@ -885,6 +885,8 @@ class TassGrammar(Grammar):
 
 def main():
     grammar = TassGrammar()
+    print(grammar.size())
+    return
 
     ge = PGE(grammar, verbose=True, popsize=100, selected=0.2, learning=0.05, errors='warn', timeout=300)
     ge.run(100)
