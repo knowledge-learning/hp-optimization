@@ -14,7 +14,7 @@ def main():
     random.seed(0)
 
     for i in range(20):
-        classifier = SklearnClassifier(popsize=20, select=5, iters=100, timeout=300, global_timeout=3600, fitness_evaluations=5, verbose=True)
+        classifier = SklearnClassifier(incremental=True, popsize=20, select=5, iters=100, timeout=300, global_timeout=3600, fitness_evaluations=5, verbose=True)
         classifier.fit(Xtrain, ytrain)
 
         with open("wine-quality.log", "a") as fp:

@@ -221,7 +221,7 @@ class PGE(Metaheuristic):
             elif self.errors == 'warn':
                 warnings.warn(str(e))
 
-    def _evaluate(self, ind:Individual, manager, cmplx):
+    def _evaluate(self, ind:Individual, manager, evalc, genc, cmplx):
         """Computa el fitness de un individuo."""
 
         self.log(yaml.dump(ind.sample()))
@@ -239,6 +239,10 @@ class PGE(Metaheuristic):
             try:
                 score += q.get(block=True, timeout=self.timeout)
                 counter.update()
+                if evalc:
+                    evalc.update()
+                if genc:
+                    genc.update()
             except Empty:
                 self.log("! Timeout")
                 return 0
@@ -268,7 +272,7 @@ class PGE(Metaheuristic):
         self.pop_std = []
 
         manager = enlighten.get_manager(enabled=self.verbose)
-        generation_counter = manager.counter(total=evals, unit='itr', desc='Overall [Best = .....]')
+        generation_counter = manager.counter(total=evals * self.popsize * self.fitness_evaluations, unit='run', desc='Overall [Best = .....]')
         generation_counter.update(0, force=True)
 
         while it < evals:
@@ -278,28 +282,31 @@ class PGE(Metaheuristic):
             cmplx = it * (1 - self.start_complexity) / evals + self.start_complexity
             self.log("Complexity: %.3f" % cmplx)
 
-            evaluation_counter = manager.counter(total=self.popsize, unit='ind', desc='  Current Population  ', leave=False)
+            if self.current_best is not None and self.incremental:
+                self.current_fn = self._evaluate(self.current_best, manager, None, None, cmplx)
+                self.log("Reevaluating best pipeline")
+
+            evaluation_counter = manager.counter(total=self.popsize * self.fitness_evaluations, unit='run', desc='  Current Population  ', leave=False)
             evaluation_counter.update(0, force=True)
 
             for i in self.population:
-                self.fitness.append(self._evaluate(i, manager, cmplx))
-                evaluation_counter.update()
+                fn = self._evaluate(i, manager, evaluation_counter, generation_counter, cmplx)
 
-            evaluation_counter.close()
-
-            if self.current_best is not None and self.incremental:
-                self.current_fn = self._evaluate(self.current_best, manager, cmplx)
-                self.log("Reevaluating best pipeline")
-
-            for ind, fn in zip(self.population, self.fitness):
                 if any([self.current_best      is  None,
                         self.maximize == True  and fn > self.current_fn,
                         self.maximize == False and fn < self.current_fn]):
 
-                    self.current_best = ind
+                    self.current_best = i
                     self.current_fn = fn
 
+                    generation_counter.desc = 'Overall [Best = %.3f]' % self.current_fn
+                    generation_counter.update(0, force=True)
+
                     self.log("Updated best: ", self.current_fn)
+
+                self.fitness.append(fn)
+
+            evaluation_counter.close()
 
             self.pop_avg.append(np.mean(self.fitness))
             self.pop_std.append(np.std(self.fitness))
@@ -312,9 +319,6 @@ class PGE(Metaheuristic):
             best = self._select(self.population, self.fitness)
             self._update_model(best)
             it += 1
-
-            generation_counter.desc = 'Overall [Best = %.3f]' % self.current_fn
-            generation_counter.update(1)
 
         manager.stop()
         return self.current_best
