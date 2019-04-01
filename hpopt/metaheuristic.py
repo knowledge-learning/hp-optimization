@@ -5,7 +5,6 @@ import os
 import time
 
 class Metaheuristic:
-
     def save(self, encoder=json.JSONEncoder):
         """Salva los datos actuales de la metaheurística"""
         p = {}

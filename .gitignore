@@ -133,3 +133,4 @@ run_experiment.py
 .vscode
 *.log
 *.json
+*.zip
