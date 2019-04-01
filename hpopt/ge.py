@@ -115,7 +115,9 @@ class PGE(Metaheuristic):
                        fitness_evaluations=1,
                        errors='raise',
                        global_timeout=None,
-                       maximize=True):
+                       maximize=True,
+                       incremental=False,
+                       start_complexity=0.1):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -137,6 +139,8 @@ class PGE(Metaheuristic):
         self.errors = errors
         self.global_timeout = global_timeout
         self.maximize = maximize
+        self.incremental = incremental
+        self.start_complexity = start_complexity
         self.indsize = self._grammar.complexity()
 
     def log(self, *args, **kwargs):
@@ -197,10 +201,15 @@ class PGE(Metaheuristic):
         else:
             raise ValueError("Invalid type for a rule: %s" % str(rule))
 
-    def _evaluate_one(self, ind, q, manager):
+    def _evaluate_one(self, ind, q, cmplx):
         try:
             ind.reset()
-            f = self._grammar.evaluate(ind)
+
+            if self.incremental:
+                f = self._grammar.evaluate(ind, cmplx)
+            else:
+                f = self._grammar.evaluate(ind)
+
             q.put(f)
         except InvalidPipeline as e:
             self.log("!", str(e))
@@ -212,7 +221,7 @@ class PGE(Metaheuristic):
             elif self.errors == 'warn':
                 warnings.warn(str(e))
 
-    def _evaluate(self, ind:Individual, manager):
+    def _evaluate(self, ind:Individual, manager, cmplx):
         """Computa el fitness de un individuo."""
 
         self.log(yaml.dump(ind.sample()))
@@ -224,7 +233,7 @@ class PGE(Metaheuristic):
         for i in range(self.fitness_evaluations):
 
             q = multiprocessing.Queue()
-            p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q, manager))
+            p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q, cmplx))
             p.start()
 
             try:
@@ -252,7 +261,6 @@ class PGE(Metaheuristic):
         """Ejecuta la metaheurística hasta el número de evaluaciones indicado"""
 
         start_time = time.time()
-        term = blessed.Terminal()
 
         it = 0
         self.current_best, self.current_fn = None, 0
@@ -267,14 +275,21 @@ class PGE(Metaheuristic):
             self.population = self._sample_population()
             self.fitness = []
 
+            cmplx = it * (1 - self.start_complexity) / evals + self.start_complexity
+            self.log("Complexity: %.3f" % cmplx)
+
             evaluation_counter = manager.counter(total=self.popsize, unit='ind', desc='  Current Population  ', leave=False)
             evaluation_counter.update(0, force=True)
 
             for i in self.population:
-                self.fitness.append(self._evaluate(i, manager))
+                self.fitness.append(self._evaluate(i, manager, cmplx))
                 evaluation_counter.update()
 
             evaluation_counter.close()
+
+            if self.current_best is not None and self.incremental:
+                self.current_fn = self._evaluate(self.current_best, manager, cmplx)
+                self.log("Reevaluating best pipeline")
 
             for ind, fn in zip(self.population, self.fitness):
                 if any([self.current_best      is  None,
