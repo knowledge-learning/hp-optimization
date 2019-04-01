@@ -131,7 +131,7 @@ class TassGrammar(Grammar):
         TEST = 'test' in sys.argv
 
         # load training data
-        dataset_path = Path.cwd() / 'hltopt' / 'datasets' / 'ehealthkd'
+        dataset_path = Path.cwd() / 'hpopt' / 'datasets' / 'ehealthkd'
         dataset = Dataset()
 
         for file in (dataset_path / 'training').iterdir():
