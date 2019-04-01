@@ -6,6 +6,7 @@ import random
 from queue import Empty
 from functools import reduce
 
+import time
 import numpy as np
 import warnings
 import yaml
@@ -103,7 +104,7 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False, fitness_evaluations=1, errors='raise'):
+    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False, fitness_evaluations=1, errors='raise', global_timeout=None):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -119,6 +120,7 @@ class PGE(Metaheuristic):
         self.learning = learning
         self.errors = errors
         self.fitness_evaluations = fitness_evaluations
+        self.global_timeout = global_timeout
 
         if isinstance(selected, float):
             selected = int(selected * popsize)
@@ -233,6 +235,8 @@ class PGE(Metaheuristic):
     def run(self, evals:int):
         """Ejecuta la metaheurística hasta el número de evaluaciones indicado"""
 
+        start_time = time.time()
+
         it = 0
         self.current_best, self.current_fn = None, 0
         self.pop_avg = []
@@ -252,6 +256,9 @@ class PGE(Metaheuristic):
             self.pop_std.append(np.std(self.fitness))
 
             self.save(GEEncoder)
+
+            if self.global_timeout and time.time() - start_time > self.global_timeout:
+                break
 
             best = self._select(self.population, self.fitness)
             self._update_model(best)

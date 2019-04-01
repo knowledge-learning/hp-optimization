@@ -142,7 +142,7 @@ class SklearnGrammar(Grammar):
         X, balance = self._data_prep(ind, X)
         X = self._feat_prep(ind, X)
 
-        Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.2)
+        Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.3)
 
         classifier = self._classifier(ind, balance)
 
@@ -506,7 +506,7 @@ class SklearnNLPGrammar(SklearnGrammar):
 
 
 class SklearnClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, fitness_evaluations=1, timeout=None, verbose=False):
+    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, fitness_evaluations=1, timeout=None, verbose=False, global_timeout=None):
         self.popsize = popsize
         self.select = select
         self.learning = learning
@@ -514,10 +514,11 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
         self.timeout = timeout
         self.verbose = verbose
         self.fitness_evaluations = fitness_evaluations
+        self.global_timeout = global_timeout
 
     def fit(self, X, y):
         self.grammar_ = SklearnGrammar(X, y)
-        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations)
+        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations, global_timeout=self.global_timeout)
         self.best_ = ge.run(self.iters)
         self.best_sample_ = self.best_.sample()
 
