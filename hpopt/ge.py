@@ -109,7 +109,7 @@ class PGE(Metaheuristic):
     def __init__(self, grammar,
                        popsize=100,
                        selected=0.1,
-                       learning=0.25,
+                       learning=0.05,
                        timeout=None,
                        verbose=False,
                        fitness_evaluations=1,

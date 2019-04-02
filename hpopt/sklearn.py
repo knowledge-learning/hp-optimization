@@ -139,11 +139,12 @@ class SklearnGrammar(Grammar):
     def evaluate(self, ind, cmplx=1.0):
         # 'Pipeline'     : 'DataPrep FeatPrep Class',
         X, y = self.X, self.y
-        X, balance = self._data_prep(ind, X)
-        X = self._feat_prep(ind, X)
 
         if cmplx < 1.0:
             X, _, y, _ = train_test_split(X, y, train_size=cmplx)
+
+        X, balance = self._data_prep(ind, X)
+        X = self._feat_prep(ind, X)
 
         Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.3)
 
@@ -152,14 +153,7 @@ class SklearnGrammar(Grammar):
         try:
             classifier.fit(Xtrain, ytrain)
         except TypeError as e:
-            if 'sparse' in str(e) and hasattr(Xtrain, 'toarray'):
-                Xtrain = Xtrain.toarray()
-                Xtest = Xtest.toarray()
-                classifier.fit(Xtrain, ytrain)
-            else:
-                raise e
-        except ValueError as e:
-            if 'must be non-negative' in str(e):
+            if 'sparse' or 'must be non-negative' in str(e):
                 raise InvalidPipeline()
             raise e
 
@@ -191,7 +185,11 @@ class SklearnGrammar(Grammar):
     def _encoding(self, ind, X):
         # 'Encoding'     : 'none | onehot',
         if ind.choose('none', 'onehot') == 'onehot':
+
             try:
+                if not np.all(X.astype(int) != X):
+                    raise InvalidPipeline('Integer values required for onehot')
+
                 X = OneHotEncoder(categories='auto').fit_transform(X)
             except TypeError as e:
                 if 'dense data is required' in str(e):
@@ -509,7 +507,7 @@ class SklearnNLPGrammar(SklearnGrammar):
 
 
 class SklearnClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, incremental=False, popsize=100, select=0.2, learning=0.25, iters=100, fitness_evaluations=1, timeout=None, verbose=False, global_timeout=None):
+    def __init__(self, incremental=False, popsize=100, select=0.2, learning=0.05, iters=100, fitness_evaluations=1, timeout=None, verbose=False, global_timeout=None):
         self.popsize = popsize
         self.select = select
         self.learning = learning
@@ -536,7 +534,7 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
 
 
 class SklearnNLPClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, incremental=False, popsize=100, select=0.2, learning=0.25, iters=100, timeout=None, fitness_evaluations=1, verbose=False):
+    def __init__(self, incremental=False, popsize=100, select=0.2, learning=0.05, iters=100, timeout=None, fitness_evaluations=1, verbose=False):
         self.popsize = popsize
         self.select = select
         self.learning = learning
