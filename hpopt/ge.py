@@ -3,7 +3,6 @@
 import json
 import multiprocessing
 import random
-import blessed
 from queue import Empty
 from functools import reduce
 
