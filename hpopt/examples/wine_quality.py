@@ -3,12 +3,13 @@
 import random
 from hpopt.datasets.uci.wine_quality import load_corpus
 from ..sklearn import SklearnClassifier
+from sklearn.model_selection import train_test_split
 
 
 def main():
     X, y = load_corpus()
 
-    Xtrain, Xtest, ytrain, ytest = train = train_test_split(X, y, test_size=0.3)
+    Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.3)
 
     random.seed(0)
 

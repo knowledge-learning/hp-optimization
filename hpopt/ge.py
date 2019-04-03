@@ -3,9 +3,11 @@
 import json
 import multiprocessing
 import random
+import blessed
 from queue import Empty
 from functools import reduce
 
+import enlighten
 import time
 import numpy as np
 import warnings
@@ -104,7 +106,18 @@ class Individual:
 
 
 class PGE(Metaheuristic):
-    def __init__(self, grammar, popsize=100, selected=0.1, learning=0.25, timeout=None, verbose=False, fitness_evaluations=1, errors='raise', global_timeout=None):
+    def __init__(self, grammar,
+                       popsize=100,
+                       selected=0.1,
+                       learning=0.05,
+                       timeout=None,
+                       verbose=False,
+                       fitness_evaluations=1,
+                       errors='raise',
+                       global_timeout=None,
+                       maximize=True,
+                       incremental=False,
+                       start_complexity=0.1):
         """Representa una metaheurística de Evolución Gramatical Probabilística.
 
         - `popsize`: tamaño de la población
@@ -113,20 +126,22 @@ class PGE(Metaheuristic):
         """
         super().__init__()
 
-        self.timeout = timeout
-        self._grammar = grammar
-        self.popsize = popsize
-        self.indsize = self._grammar.complexity()
-        self.learning = learning
-        self.errors = errors
-        self.fitness_evaluations = fitness_evaluations
-        self.global_timeout = global_timeout
-
         if isinstance(selected, float):
             selected = int(selected * popsize)
 
+        self._grammar = grammar
+        self.popsize = popsize
         self.selected = selected
+        self.learning = learning
+        self.timeout = timeout
         self.verbose = verbose
+        self.fitness_evaluations = fitness_evaluations
+        self.errors = errors
+        self.global_timeout = global_timeout
+        self.maximize = maximize
+        self.incremental = incremental
+        self.start_complexity = start_complexity
+        self.indsize = self._grammar.complexity()
 
     def log(self, *args, **kwargs):
         if self.verbose:
@@ -146,7 +161,7 @@ class PGE(Metaheuristic):
 
     def _select(self, pop, fit):
         """Selecciona los mejores {self.indsize} elementos de la población."""
-        sorted_pop = sorted(zip(pop,fit), key=lambda t: t[1], reverse=True)
+        sorted_pop = sorted(zip(pop,fit), key=lambda t: t[1], reverse=self.maximize)
         return [t[0] for t in sorted_pop[:self.selected]]
 
     def _update_model(self, best):
@@ -186,15 +201,16 @@ class PGE(Metaheuristic):
         else:
             raise ValueError("Invalid type for a rule: %s" % str(rule))
 
-    def _evaluate_one(self, ind, q):
+    def _evaluate_one(self, ind, q, cmplx):
         try:
-            score = 0
+            ind.reset()
 
-            for _ in range(self.fitness_evaluations):
-                ind.reset()
-                score += self._grammar.evaluate(ind)
+            if self.incremental:
+                f = self._grammar.evaluate(ind, cmplx)
+            else:
+                f = self._grammar.evaluate(ind)
 
-            q.put(score / self.fitness_evaluations)
+            q.put(f)
         except InvalidPipeline as e:
             self.log("!", str(e))
             q.put(0)
@@ -205,31 +221,44 @@ class PGE(Metaheuristic):
             elif self.errors == 'warn':
                 warnings.warn(str(e))
 
-    def _evaluate(self, ind:Individual):
+    def _evaluate(self, ind:Individual, manager, evalc, genc, cmplx):
         """Computa el fitness de un individuo."""
 
         self.log(yaml.dump(ind.sample()))
         ind.reset()
 
-        q = multiprocessing.Queue()
-        p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q))
-        p.start()
+        score = 0
+        counter = manager.counter(desc='    Current Individual', unit='run', total=self.fitness_evaluations, leave=False)
 
-        try:
-            f = q.get(block=True, timeout=self.timeout)
-        except Empty:
-            self.log("! Timeout")
-            f = 0
-        except Exception as e:
-            if self.errors == 'raise':
-                raise
-            elif self.errors == 'warn':
-                warnings.warn(str(e))
-                f = 0
-            elif self.errors == 'ignore':
-                f = 0
+        for i in range(self.fitness_evaluations):
 
-        self.log("Fitness: %.3f" % f)
+            q = multiprocessing.Queue()
+            p = multiprocessing.Process(target=self._evaluate_one, args=(ind, q, cmplx))
+            p.start()
+
+            try:
+                score += q.get(block=True, timeout=self.timeout)
+                counter.update()
+                if evalc:
+                    evalc.update()
+                if genc:
+                    genc.update()
+            except Empty:
+                self.log("! Timeout")
+                return 0
+            except Exception as e:
+                if self.errors == 'raise':
+                    raise
+                elif self.errors == 'warn':
+                    warnings.warn(str(e))
+                    return 0
+                elif self.errors == 'ignore':
+                    return 0
+            finally:
+                counter.close()
+
+        f = score / self.fitness_evaluations
+        self.log("Fitness: %.3f\n----------" % f)
         return f
 
     def run(self, evals:int):
@@ -242,15 +271,42 @@ class PGE(Metaheuristic):
         self.pop_avg = []
         self.pop_std = []
 
+        manager = enlighten.get_manager(enabled=self.verbose)
+        generation_counter = manager.counter(total=evals * self.popsize * self.fitness_evaluations, unit='run', desc='Overall [Best = .....]')
+        generation_counter.update(0, force=True)
+
         while it < evals:
             self.population = self._sample_population()
-            self.fitness = [self._evaluate(i) for i in self.population]
+            self.fitness = []
 
-            for ind, fn in zip(self.population, self.fitness):
-                if fn > self.current_fn:
-                    self.current_best = ind
+            cmplx = it * (1 - self.start_complexity) / evals + self.start_complexity
+            self.log("Complexity: %.3f" % cmplx)
+
+            if self.current_best is not None and self.incremental:
+                self.current_fn = self._evaluate(self.current_best, manager, None, None, cmplx)
+                self.log("Reevaluating best pipeline")
+
+            evaluation_counter = manager.counter(total=self.popsize * self.fitness_evaluations, unit='run', desc='  Current Population  ', leave=False)
+            evaluation_counter.update(0, force=True)
+
+            for i in self.population:
+                fn = self._evaluate(i, manager, evaluation_counter, generation_counter, cmplx)
+
+                if any([self.current_best      is  None,
+                        self.maximize == True  and fn > self.current_fn,
+                        self.maximize == False and fn < self.current_fn]):
+
+                    self.current_best = i
                     self.current_fn = fn
+
+                    generation_counter.desc = 'Overall [Best = %.3f]' % self.current_fn
+                    generation_counter.update(0, force=True)
+
                     self.log("Updated best: ", self.current_fn)
+
+                self.fitness.append(fn)
+
+            evaluation_counter.close()
 
             self.pop_avg.append(np.mean(self.fitness))
             self.pop_std.append(np.std(self.fitness))
@@ -264,6 +320,7 @@ class PGE(Metaheuristic):
             self._update_model(best)
             it += 1
 
+        manager.stop()
         return self.current_best
 
 

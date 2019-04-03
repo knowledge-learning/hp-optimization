@@ -136,9 +136,13 @@ class SklearnGrammar(Grammar):
     def grammar(self):
         return grammar
 
-    def evaluate(self, ind):
+    def evaluate(self, ind, cmplx=1.0):
         # 'Pipeline'     : 'DataPrep FeatPrep Class',
         X, y = self.X, self.y
+
+        if cmplx < 1.0:
+            X, _, y, _ = train_test_split(X, y, train_size=cmplx)
+
         X, balance = self._data_prep(ind, X)
         X = self._feat_prep(ind, X)
 
@@ -149,14 +153,7 @@ class SklearnGrammar(Grammar):
         try:
             classifier.fit(Xtrain, ytrain)
         except TypeError as e:
-            if 'sparse' in str(e) and hasattr(Xtrain, 'toarray'):
-                Xtrain = Xtrain.toarray()
-                Xtest = Xtest.toarray()
-                classifier.fit(Xtrain, ytrain)
-            else:
-                raise e
-        except ValueError as e:
-            if 'must be non-negative' in str(e):
+            if 'sparse' or 'must be non-negative' in str(e):
                 raise InvalidPipeline()
             raise e
 
@@ -188,7 +185,11 @@ class SklearnGrammar(Grammar):
     def _encoding(self, ind, X):
         # 'Encoding'     : 'none | onehot',
         if ind.choose('none', 'onehot') == 'onehot':
+
             try:
+                if not np.all(X.astype(int) != X):
+                    raise InvalidPipeline('Integer values required for onehot')
+
                 X = OneHotEncoder(categories='auto').fit_transform(X)
             except TypeError as e:
                 if 'dense data is required' in str(e):
@@ -506,7 +507,7 @@ class SklearnNLPGrammar(SklearnGrammar):
 
 
 class SklearnClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, fitness_evaluations=1, timeout=None, verbose=False, global_timeout=None):
+    def __init__(self, incremental=False, popsize=100, select=0.2, learning=0.05, iters=100, fitness_evaluations=1, timeout=None, verbose=False, global_timeout=None):
         self.popsize = popsize
         self.select = select
         self.learning = learning
@@ -515,10 +516,11 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
         self.verbose = verbose
         self.fitness_evaluations = fitness_evaluations
         self.global_timeout = global_timeout
+        self.incremental = incremental
 
     def fit(self, X, y):
         self.grammar_ = SklearnGrammar(X, y)
-        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations, global_timeout=self.global_timeout)
+        ge = PGE(self.grammar_, incremental=self.incremental, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations, global_timeout=self.global_timeout)
         self.best_ = ge.run(self.iters)
         self.best_sample_ = self.best_.sample()
 
@@ -532,18 +534,19 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
 
 
 class SklearnNLPClassifier(BaseEstimator, ClassifierMixin):
-    def __init__(self, popsize=100, select=0.2, learning=0.25, iters=100, timeout=None, fitness_evaluations=1, verbose=False):
+    def __init__(self, incremental=False, popsize=100, select=0.2, learning=0.05, iters=100, timeout=None, fitness_evaluations=1, verbose=False):
         self.popsize = popsize
         self.select = select
         self.learning = learning
         self.iters = iters
         self.timeout = timeout
         self.verbose = verbose
+        self.incremental = incremental
         self.fitness_evaluations = fitness_evaluations
 
     def fit(self, X, y):
         self.grammar_ = SklearnNLPGrammar(X, y)
-        ge = PGE(self.grammar_, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations)
+        ge = PGE(self.grammar_, incremental=self.incremental, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations)
         self.best_ = ge.run(self.iters)
         self.best_sample_ = self.best_.sample()
 
