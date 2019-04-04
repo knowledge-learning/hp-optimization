@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 
 
 def main():
-    X, y = load_corpus()
+    X, y = load_corpus(white=True)
 
     Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.3)
 
