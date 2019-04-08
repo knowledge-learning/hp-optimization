@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import time
 import numpy as np
 from scipy import sparse as sp
 from collections import Counter
@@ -12,6 +13,7 @@ from sklearn.feature_extraction import DictVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction.text import CountVectorizer
 from nltk.corpus import stopwords
+from sklearn.pipeline import Pipeline
 
 # classifiers
 ## bayes
@@ -55,9 +57,9 @@ from sklearn.neural_network import MLPRegressor
 
 # data preprocesing
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.preprocessing import minmax_scale
-from sklearn.preprocessing import quantile_transform
-from sklearn.preprocessing import robust_scale
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import QuantileTransformer
+from sklearn.preprocessing import RobustScaler
 from sklearn.impute import SimpleImputer
 
 # feature preprocessing
@@ -136,150 +138,125 @@ class SklearnGrammar(Grammar):
     def grammar(self):
         return grammar
 
-    def evaluate(self, ind, cmplx=1.0):
+    def generate(self, ind):
+        pipeline = []
+        balance = self._data_prep(ind, pipeline)
+        self._feat_prep(ind, pipeline)
+        pipeline.append(('classifier', self._classifier(ind, balance)))
+
+        return Pipeline(steps=pipeline)#, memory="cached_memory_%i.dat" % int(time.time()))
+
+    def evaluate(self, pipeline, cmplx=1.0):
         # 'Pipeline'     : 'DataPrep FeatPrep Class',
         X, y = self.X, self.y
 
         if cmplx < 1.0:
             X, _, y, _ = train_test_split(X, y, train_size=cmplx)
 
-        X, balance = self._data_prep(ind, X)
-        X = self._feat_prep(ind, X)
-
         Xtrain, Xtest, ytrain, ytest = train_test_split(X, y, test_size=0.3)
 
-        classifier = self._classifier(ind, balance)
-
         try:
-            classifier.fit(Xtrain, ytrain)
+            pipeline.fit(Xtrain, ytrain)
         except TypeError as e:
             if 'sparse' or 'must be non-negative' in str(e):
                 raise InvalidPipeline()
             raise e
 
-        return classifier.score(Xtest, ytest)
+        return pipeline.score(Xtest, ytest)
 
-    def train(self, ind, X, y):
-        X, balance = self._data_prep(ind, X)
-        X = self._feat_prep(ind, X)
-
-        classifier = self._classifier(ind, balance)
-        classifier.fit(X, y)
-
-        return classifier
-
-    def process(self, ind, X):
-        X, _ = self._data_prep(ind, X)
-        X = self._feat_prep(ind, X)
-        return X
-
-    def _data_prep(self, ind, X):
+    def _data_prep(self, ind, pipeline):
         # 'DataPrep'     : 'Encoding Rescaling Imputation Balancing',
-        X = self._encoding(ind, X)
-        X = self._rescaling(ind, X)
-        X = self._imputation(ind, X)
+        self._encoding(ind, pipeline)
+        self._rescaling(ind, pipeline)
+        self._imputation(ind, pipeline)
         balance = 'balanced' if ind.choose('none', 'weight') == 'weight' else None
 
-        return X, balance
+        return balance
 
-    def _encoding(self, ind, X):
+    def _encoding(self, ind, pipeline):
         # 'Encoding'     : 'none | onehot',
         if ind.choose('none', 'onehot') == 'onehot':
 
-            try:
-                if not np.all(X.astype(int) != X):
-                    raise InvalidPipeline('Integer values required for onehot')
+            if not np.all(self.X.astype(int) == self.X):
+                raise InvalidPipeline('Integer values required for onehot')
 
-                X = OneHotEncoder(categories='auto').fit_transform(X)
-            except TypeError as e:
-                if 'dense data is required' in str(e):
-                    raise InvalidPipeline(str(e))
-                else:
-                    raise
+            pipeline.append(('encoding', OneHotEncoder(categories='auto')))
 
-        return X
-
-    def _rescaling(self, ind, X):
+    def _rescaling(self, ind, pipeline):
         # 'Rescaling'    : 'none | minmax | standard | quantile',
-        scaling = ind.choose(None, minmax_scale, robust_scale, quantile_transform)
+        scaling = ind.choose(None, MinMaxScaler(), RobustScaler(), QuantileTransformer())
 
         if scaling:
-            if hasattr(X, 'toarray'):
-                X = X.toarray()
-            X = scaling(X)
+            pipeline.append(('scaling', scaling))
 
-        return X
-
-    def _imputation(self, ind, X):
+    def _imputation(self, ind, pipeline):
         # 'Imputation'   : 'none | mean | median | most_frequent',
         method = ind.choose('none', 'mean', 'median', 'most_frequent')
 
         if method != 'none':
-            X = SimpleImputer(strategy=method).fit_transform(X)
+            pipeline.append(('imputation', SimpleImputer(strategy=method)))
 
-        return X
+        # return X
 
-    def _feat_prep(self, ind, X):
+    def _feat_prep(self, ind, pipeline):
         # 'FeatPrep'     : 'none | Decomp | FeatSel',
         method = ind.choose(None, self._decompose, self._feat_sel)
 
         if method:
-            X = method(ind, X)
+            method(ind, pipeline)
 
-        return X
-
-    def _decompose(self, ind, X):
+    def _decompose(self, ind, pipeline):
         # 'Decomp'       : 'FastICA | PCA | TruncSVD | KernelPCA',
         method = ind.choose(self._fastica, self._pca, self._truncsvd, self._kpca)
-        return method(ind, X)
+        method(ind, pipeline)
 
-    def _ncomp(self, ind, X):
-        return max(2, int(ind.nextfloat() * min(X.shape)))
+    def _ncomp(self, ind):
+        return max(2, int(ind.nextfloat() * min(self.X.shape)))
 
-    def _fastica(self, ind, X):
+    def _fastica(self, ind, pipeline):
         # 'FastICA'      : 'i(2,100)',
-        if hasattr(X, 'toarray'):
-            X = X.toarray()
+        if not isinstance(self.X, np.ndarray):
+            raise InvalidPipeline("FastICA requires dense data.")
 
-        return FastICA(n_components=self._ncomp(ind, X)).fit_transform(X)
+        pipeline.append(('feature', FastICA(n_components=self._ncomp(ind))))
 
-    def _pca(self, ind, X):
+    def _pca(self, ind, pipeline):
         # 'PCA'          : 'i(2,100)',
-        if hasattr(X, 'toarray'):
-            X = X.toarray()
+        if not isinstance(self.X, np.ndarray):
+            raise InvalidPipeline("PCA requires dense data.")
 
-        return PCA(n_components=self._ncomp(ind, X)).fit_transform(X)
+        pipeline.append(('feature', PCA(n_components=self._ncomp(ind))))
 
-    def _truncsvd(self, ind, X):
+    def _truncsvd(self, ind, pipeline):
         # 'TruncSVD'     : 'i(2,100)',
-        return TruncatedSVD(n_components=self._ncomp(ind, X)).fit_transform(X)
+        pipeline.append(('feature', TruncatedSVD(n_components=self._ncomp(ind))))
 
-    def _kpca(self, ind, X):
+    def _kpca(self, ind, pipeline):
         # 'KernelPCA'    : 'KPCAn | KPCAk',
         # 'KPCAn'        : 'f(0.01,0.5)' ,
         # 'KPCAk'        : 'linear | poly | rbf | sigmoid | cosine',
-        return KernelPCA(n_components=self._ncomp(ind, X),
-                         kernel=ind.choose('linear', 'poly', 'rbf', 'sigmoid', 'cosine')).fit_transform(X)
+        pipeline.append(('feature', KernelPCA(n_components=self._ncomp(ind),
+                         kernel=ind.choose('linear', 'poly', 'rbf', 'sigmoid', 'cosine'))))
 
-    def _feat_sel(self, ind, X):
+    def _feat_sel(self, ind, pipeline):
         # 'FeatSel'      : 'FeatAgg | Poly | Nystrom ',
         method = ind.choose(self._featagg, self._poly, self._nystrom)
-        return method(ind, X)
+        method(ind, pipeline)
 
-    def _featagg(self, ind, X):
+    def _featagg(self, ind, pipeline):
         # 'FeatAgg'      : 'f(0.01,0.5)',
-        if hasattr(X, 'toarray'):
-            X = X.toarray()
+        if not isinstance(self.X, np.ndarray):
+            raise InvalidPipeline("FeatureAgglomeration requires dense data.")
 
-        return FeatureAgglomeration(n_clusters=self._ncomp(ind, X)).fit_transform(X)
+        pipeline.append(('feature', FeatureAgglomeration(n_clusters=self._ncomp(ind))))
 
-    def _poly(self, ind, X):
+    def _poly(self, ind, pipeline):
         # 'Poly'         : 'i(2,3)',
-        return PolynomialFeatures(degree=ind.nextint()).fit_transform(X)
+        pipeline.append(('feature', PolynomialFeatures(degree=ind.nextint())))
 
-    def _nystrom(self, ind, X):
+    def _nystrom(self, ind, pipeline):
         # 'Nystrom'      : 'f(0.01,0.5)',
-        return Nystroem(n_components=self._ncomp(ind, X)).fit_transform(X)
+        pipeline.append(('feature', Nystroem(n_components=self._ncomp(ind))))
 
     def _classifier(self, ind, balance):
         # 'Class'        : 'Bayes | Linear | SVC | Tree | KNN | Discriminat | MLP
@@ -330,7 +307,7 @@ class SklearnGrammar(Grammar):
 
     def _perceptron(self, ind, balance):
         # 'Perceptron'   : 'l1 | l2 | elasticnet',
-        return Perceptron(penalty=ind.choose('l1', 'l2', 'elasticnet'))
+        return Perceptron(penalty=ind.choose('l1', 'l2', 'elasticnet'), max_iter=1000)
 
     def _svc(self, ind, balance):
         # 'SVC'          : 'LinearSVC | KernelSVC',
@@ -441,10 +418,10 @@ class SklearnNLPGrammar(SklearnGrammar):
 
         return classifier.score(Xtest, ytest)
 
-    def _encoding(self, ind, X):
+    def _encoding(self, ind, pipeline):
         return X
 
-    def _text_prep(self, ind, X):
+    def _text_prep(self, ind, pipeline):
         # 'TextPrep'  : 'Clean Vect Semantic',
         sw = self._clean(ind)
         F = self._semantic(ind, X)
@@ -465,7 +442,7 @@ class SklearnNLPGrammar(SklearnGrammar):
 
         return set()
 
-    def _semantic(self, ind, X):
+    def _semantic(self, ind, pipeline):
         use_pos = ind.nextbool()
         use_tag = ind.nextbool()
         use_dep = ind.nextbool()
@@ -521,16 +498,15 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
     def fit(self, X, y):
         self.grammar_ = SklearnGrammar(X, y)
         ge = PGE(self.grammar_, incremental=self.incremental, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations, global_timeout=self.global_timeout)
-        self.best_ = ge.run(self.iters)
-        self.best_sample_ = self.best_.sample()
-
-        self.best_.reset()
-        self.classifier_ = self.grammar_.train(self.best_, X, y)
+        self.pipeline_ = ge.run(self.iters)
+        self.pipeline_.fit(X, y)
+        self.best_score_ = ge.current_fn
 
     def predict(self, X):
-        self.best_.reset()
-        X = self.grammar_.process(self.best_, X)
-        return self.classifier_.predict(X)
+        return self.pipeline_.predict(X)
+
+    def score(self, X, y):
+        return self.pipeline_.score(X, y)
 
 
 class SklearnNLPClassifier(BaseEstimator, ClassifierMixin):
@@ -546,14 +522,4 @@ class SklearnNLPClassifier(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y):
         self.grammar_ = SklearnNLPGrammar(X, y)
-        ge = PGE(self.grammar_, incremental=self.incremental, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations)
-        self.best_ = ge.run(self.iters)
-        self.best_sample_ = self.best_.sample()
-
-        self.best_.reset()
-        self.classifier_ = self.grammar_.train(self.best_, X, y)
-
-    def predict(self, X):
-        self.best_.reset()
-        X = self.grammar_.process(self.best_, X)
-        return self.classifier_.predict(X)
+        super().fit(X, y)

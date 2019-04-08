@@ -12,7 +12,7 @@ import numpy as np
 import warnings
 import yaml
 
-from .metaheuristic import Metaheuristic
+from .base import Metaheuristic
 from .utils import InvalidPipeline
 
 
@@ -203,11 +203,12 @@ class PGE(Metaheuristic):
     def _evaluate_one(self, ind, q, cmplx):
         try:
             ind.reset()
+            pipeline = self._grammar.generate(ind)
 
             if self.incremental:
-                f = self._grammar.evaluate(ind, cmplx)
+                f = self._grammar.evaluate(pipeline, cmplx)
             else:
-                f = self._grammar.evaluate(ind)
+                f = self._grammar.evaluate(pipeline)
 
             q.put(f)
         except InvalidPipeline as e:
@@ -220,14 +221,15 @@ class PGE(Metaheuristic):
             elif self.errors == 'warn':
                 warnings.warn(str(e))
 
-    def _evaluate(self, ind:Individual, manager, evalc, genc, cmplx):
+    def _evaluate(self, ind:Individual, manager, evalc, evalc_error, genc, genc_error, cmplx):
         """Computa el fitness de un individuo."""
 
         self.log(yaml.dump(ind.sample()))
         ind.reset()
 
         score = 0
-        counter = manager.counter(desc='    Current Individual', unit='run', total=self.fitness_evaluations, leave=False)
+        counter = manager.counter(desc='    Current Individual', color='green', unit='run', total=self.fitness_evaluations, leave=False)
+        counter_error = counter.add_subcounter('red')
 
         for i in range(self.fitness_evaluations):
 
@@ -236,22 +238,45 @@ class PGE(Metaheuristic):
             p.start()
 
             try:
-                score += q.get(block=True, timeout=self.timeout)
-                counter.update()
-                if evalc:
-                    evalc.update()
-                if genc:
-                    genc.update()
+                s = q.get(block=True, timeout=self.timeout)
+                score += s
+                if s > 0:
+                    counter.update()
+                    if evalc:
+                        evalc.update()
+                    if genc:
+                        genc.update()
+                else:
+                    counter_error.update()
+                    if evalc_error:
+                        evalc_error.update()
+                    if genc_error:
+                        genc_error.update()
             except Empty:
                 self.log("! Timeout")
+                counter_error.update()
+                if evalc_error:
+                    evalc_error.update()
+                if genc_error:
+                    genc_error.update()
                 return 0
             except Exception as e:
                 if self.errors == 'raise':
                     raise
                 elif self.errors == 'warn':
                     warnings.warn(str(e))
+                    counter_error.update()
+                    if evalc_error:
+                        evalc_error.update()
+                    if genc_error:
+                        genc_error.update()
                     return 0
                 elif self.errors == 'ignore':
+                    counter_error.update()
+                    if evalc_error:
+                        evalc_error.update()
+                    if genc_error:
+                        genc_error.update()
                     return 0
             finally:
                 counter.close()
@@ -271,8 +296,9 @@ class PGE(Metaheuristic):
         self.pop_std = []
 
         manager = enlighten.get_manager(enabled=self.verbose)
-        generation_counter = manager.counter(total=evals * self.popsize * self.fitness_evaluations, unit='run', desc='Overall [Best = .....]')
+        generation_counter = manager.counter(total=evals * self.popsize * self.fitness_evaluations, color='green', unit='run', desc='Overall [Best = .....]')
         generation_counter.update(0, force=True)
+        generation_counter_error = generation_counter.add_subcounter('red')
 
         while it < evals:
             self.population = self._sample_population()
@@ -282,20 +308,25 @@ class PGE(Metaheuristic):
             self.log("Complexity: %.3f" % cmplx)
 
             if self.current_best is not None and self.incremental:
-                self.current_fn = self._evaluate(self.current_best, manager, None, None, cmplx)
+                self.current_fn = self._evaluate(self.current_best, manager, None, None, None, None, cmplx)
                 self.log("Reevaluating best pipeline")
 
-            evaluation_counter = manager.counter(total=self.popsize * self.fitness_evaluations, unit='run', desc='  Current Population  ', leave=False)
+            evaluation_counter = manager.counter(total=self.popsize * self.fitness_evaluations, color='green', unit='run', desc='  Current Population  ', leave=False)
             evaluation_counter.update(0, force=True)
+            evaluation_counter_error = evaluation_counter.add_subcounter('red')
 
             for i in self.population:
-                fn = self._evaluate(i, manager, evaluation_counter, generation_counter, cmplx)
+                fn = self._evaluate(i, manager, evaluation_counter, evaluation_counter_error, generation_counter, generation_counter_error, cmplx)
+
+                if fn == 0.0:
+                    continue
 
                 if any([self.current_best      is  None,
                         self.maximize == True  and fn > self.current_fn,
                         self.maximize == False and fn < self.current_fn]):
 
-                    self.current_best = i
+                    i.reset()
+                    self.current_best = self._grammar.generate(i)
                     self.current_fn = fn
 
                     generation_counter.desc = 'Overall [Best = %.3f]' % self.current_fn
@@ -519,6 +550,11 @@ class Grammar:
     def evaluate(self, ind:Individual) -> float:
         """Recibe un elemento de la gramática y devuelve un valor de fitness creciente."""
         raise NotImplementedError()
+
+    def generate(self, ind:Individual):
+        """Optionally performs a mapping from individual to a custom pipeline representation
+        that will be later pased on to the evaluate method."""
+        return ind
 
     def grammar(self):
         raise NotImplementedError()

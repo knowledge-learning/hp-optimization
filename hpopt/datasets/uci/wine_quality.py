@@ -4,7 +4,10 @@ import numpy as np
 import os
 
 
-def load_corpus():
+def load_corpus(white=False, red=False):
+    if not red and not white:
+        raise ValueError("Either red or white must be selected")
+
     path = os.path.dirname(os.path.abspath(__file__))
 
     f_white = open(os.path.join(path, "winequality-white.csv"), "r")
@@ -13,30 +16,32 @@ def load_corpus():
     X = []
     y = []
 
-    title_line = True
 
-    for i in f_white.readlines():
+    if white:
+        title_line = True
+        for i in f_white.readlines():
 
-        if title_line == True:
-            title_line = False
-            continue
+            if title_line == True:
+                title_line = False
+                continue
 
-        clean_line = i.strip().split(";")
+            clean_line = i.strip().split(";")
 
-        X.append([float(i) for i in clean_line[:-1]])
-        y.append(float(clean_line[-1]))
+            X.append([float(i) for i in clean_line[:-1]])
+            y.append(float(clean_line[-1]))
 
-    title_line = True
+    if red:
+        title_line = True
 
-    for i in f_red.readlines():
+        for i in f_red.readlines():
 
-        if title_line == True:
-            title_line = False
-            continue
+            if title_line == True:
+                title_line = False
+                continue
 
-        clean_line = i.strip().split(";")
+            clean_line = i.strip().split(";")
 
-        X.append([float(i) for i in clean_line[:-1]])
-        y.append(float(clean_line[-1]))
+            X.append([float(i) for i in clean_line[:-1]])
+            y.append(float(clean_line[-1]))
 
     return np.asarray(X), np.asarray(y)
