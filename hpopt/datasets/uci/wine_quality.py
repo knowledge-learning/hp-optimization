@@ -17,6 +17,7 @@ def load_corpus(white=False, red=False):
     y = []
 
     if white:
+        title_line = True
         for i in f_white.readlines():
 
             if title_line == True:
