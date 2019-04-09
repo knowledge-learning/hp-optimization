@@ -523,6 +523,7 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
         ge = PGE(self.grammar_, incremental=self.incremental, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations, global_timeout=self.global_timeout)
         self.best_ = ge.run(self.iters)
         self.best_sample_ = self.best_.sample()
+        self.best_fitness_ = ge.current_fn
 
         self.best_.reset()
         self.classifier_ = self.grammar_.train(self.best_, X, y)
