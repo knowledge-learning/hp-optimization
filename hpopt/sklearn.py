@@ -498,12 +498,9 @@ class SklearnClassifier(BaseEstimator, ClassifierMixin):
     def fit(self, X, y):
         self.grammar_ = SklearnGrammar(X, y)
         ge = PGE(self.grammar_, incremental=self.incremental, popsize=self.popsize, selected=self.select, learning=self.learning, timeout=self.timeout, verbose=self.verbose, fitness_evaluations=self.fitness_evaluations, global_timeout=self.global_timeout)
-        self.best_ = ge.run(self.iters)
-        self.best_sample_ = self.best_.sample()
-        self.best_fitness_ = ge.current_fn
-
-        self.best_.reset()
-        self.classifier_ = self.grammar_.train(self.best_, X, y)
+        self.pipeline_ = ge.run(self.iters)
+        self.pipeline_.fit(X, y)
+        self.best_score_ = ge.current_fn
 
     def predict(self, X):
         return self.pipeline_.predict(X)
