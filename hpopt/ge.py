@@ -3,6 +3,8 @@
 import json
 import multiprocessing
 import random
+import sys
+import traceback
 from queue import Empty
 from functools import reduce
 
@@ -215,10 +217,12 @@ class PGE(Metaheuristic):
             self.log("!", str(e))
             q.put(0)
         except Exception as e:
-            q.put(0)
             if self.errors == 'raise':
-                raise
+                _, _, tb = sys.exc_info()
+                tb = traceback.format_tb(tb)
+                q.put((e, tb))
             elif self.errors == 'warn':
+                q.put(0)
                 warnings.warn(str(e))
 
     def _evaluate(self, ind:Individual, manager, evalc, evalc_error, genc, genc_error, cmplx):
@@ -239,6 +243,30 @@ class PGE(Metaheuristic):
 
             try:
                 s = q.get(block=True, timeout=self.timeout)
+
+                if isinstance(s, tuple):
+                    e, tb = s
+                    if self.errors == 'raise':
+                        print("(!) Exception caught in evaluation.\n(!) This is the original traceback.")
+                        print("\n".join(tb))
+                        print("(!) This is the re-raised exception.")
+                        raise e
+                    elif self.errors == 'warn':
+                        warnings.warn(str(e))
+                        counter_error.update()
+                        if evalc_error:
+                            evalc_error.update()
+                        if genc_error:
+                            genc_error.update()
+                        return 0
+                    elif self.errors == 'ignore':
+                        counter_error.update()
+                        if evalc_error:
+                            evalc_error.update()
+                        if genc_error:
+                            genc_error.update()
+                        return 0
+
                 score += s
                 if s > 0:
                     counter.update()
@@ -260,24 +288,6 @@ class PGE(Metaheuristic):
                 if genc_error:
                     genc_error.update()
                 return 0
-            except Exception as e:
-                if self.errors == 'raise':
-                    raise
-                elif self.errors == 'warn':
-                    warnings.warn(str(e))
-                    counter_error.update()
-                    if evalc_error:
-                        evalc_error.update()
-                    if genc_error:
-                        genc_error.update()
-                    return 0
-                elif self.errors == 'ignore':
-                    counter_error.update()
-                    if evalc_error:
-                        evalc_error.update()
-                    if genc_error:
-                        genc_error.update()
-                    return 0
             finally:
                 counter.close()
 
