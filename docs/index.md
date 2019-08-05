@@ -13,7 +13,8 @@ This task (finding the optimal configuration of machine learning pipeline) is of
 
 The hierarchical part comes from the fact that in `hpopt` you define the set of all possible pipelines using a hierarchical structure. In formal terms it is a context-free grammar, but informally, it is basically a hierarchical definition that starts top-level steps (such as preprocessing, vectorization, etc.), which are themselves defined recursively in terms of simpler steps, down to algorithms and their hyper-parameters.
 
-If you want to know more about the inner workings of `hpopt` we recommend reaing [our paper]().
+If you want to know more about the inner workings of `hpopt` we recommend reaing [our paper](https://www.aclweb.org/anthology/papers/P/P19/P19-1428/). Here is the source code [click here](https://github.com/knowledge-learning/hp-optimization)
+
 
 ## Quick start
 
