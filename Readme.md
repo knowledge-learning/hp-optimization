@@ -35,7 +35,7 @@ docker-compose up
 
 ## How to cite
 
-Please cite this work with the following this preliminary BibTeX:
+Please cite this work with the following this BibTeX:
 ```
 @inproceedings{estevez-velarde-etal-2019-automl,
     title = "{A}uto{ML} Strategy Based on Grammatical Evolution: A Case Study about Knowledge Discovery from Text",
